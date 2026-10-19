@@ -1,0 +1,23 @@
+# Secrets : jamais commités
+.secrets/
+.env
+.env.*
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Front
+node_modules/
+web/**/dist/
+
+# Divers
+.DS_Store
+*.log
