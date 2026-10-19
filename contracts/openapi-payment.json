@@ -1,0 +1,635 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "payment-api",
+    "description": "Virements idempotents entre comptes fictifs, ledger en partie double.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Live",
+        "operationId": "live_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Live Health Live Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Ready",
+        "operationId": "ready_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Ready Health Ready Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/public-key": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Public Key",
+        "description": "Clé publique RSA servant à chiffrer les coordonnées du bénéficiaire.\n\nÀ recharger si /payments/transfer répond 400 `decryption_failed` (clé renouvelée).",
+        "operationId": "public_key_api_payments_public_key_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicKey"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/transfer": {
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Create Transfer",
+        "operationId": "create_transfer_api_payments_transfer_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferEnvelope"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Rejeu identique : transaction existante",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Coordonnées indéchiffrables",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Aucun compte associé à l'utilisateur",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Même clé, requête différente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Fonds insuffisants, IBAN/BIC invalide ou inconnu, validation"
+          }
+        }
+      }
+    },
+    "/api/payments": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "List Payments",
+        "description": "Historique : virements émis par l'utilisateur et reçus sur ses comptes.",
+        "operationId": "list_payments_api_payments_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Payment"
+                  },
+                  "title": "Response List Payments Api Payments Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/{payment_id}": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Get Payment",
+        "operationId": "get_payment_api_payments__payment_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Introuvable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/me": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "My Account",
+        "description": "L'unique compte de l'utilisateur (un compte par personne).",
+        "operationId": "my_account_api_accounts_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucun compte associé à cet utilisateur"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/ledger/check": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Ledger Check",
+        "description": "Invariant comptable : chaque transaction s'équilibre, a deux écritures, et aucun\ncompte client n'est négatif. Utilisé par le verifier du moteur de remédiation.",
+        "operationId": "ledger_check_api_admin_ledger_check_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerCheck"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Account": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "iban_masked": {
+            "type": "string",
+            "title": "Iban Masked",
+            "examples": [
+              "FR****8995"
+            ]
+          },
+          "bic": {
+            "type": "string",
+            "title": "Bic"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "balance_cents": {
+            "type": "integer",
+            "title": "Balance Cents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "iban_masked",
+          "bic",
+          "label",
+          "currency",
+          "balance_cents"
+        ],
+        "title": "Account"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LedgerCheck": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "unbalanced_tx": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Unbalanced Tx"
+          },
+          "incomplete_tx": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Incomplete Tx"
+          },
+          "negative_accounts": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Negative Accounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "unbalanced_tx",
+          "incomplete_tx",
+          "negative_accounts"
+        ],
+        "title": "LedgerCheck"
+      },
+      "Payment": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "src_account": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Src Account"
+          },
+          "dst_account": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Dst Account"
+          },
+          "dst_iban_masked": {
+            "type": "string",
+            "title": "Dst Iban Masked",
+            "examples": [
+              "FR****8995"
+            ]
+          },
+          "amount_cents": {
+            "type": "integer",
+            "title": "Amount Cents"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "COMPLETED",
+              "REJECTED"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "src_account",
+          "dst_account",
+          "dst_iban_masked",
+          "amount_cents",
+          "status",
+          "created_at"
+        ],
+        "title": "Payment"
+      },
+      "PublicKey": {
+        "properties": {
+          "public_key": {
+            "type": "string",
+            "title": "Public Key",
+            "description": "Clé publique RSA, PEM SubjectPublicKeyInfo"
+          },
+          "key_id": {
+            "type": "string",
+            "title": "Key Id",
+            "description": "Empreinte de la clé ; change si la clé est renouvelée"
+          },
+          "algorithm": {
+            "type": "string",
+            "const": "RSA-OAEP-256",
+            "title": "Algorithm"
+          },
+          "content_encryption": {
+            "type": "string",
+            "const": "A256GCM",
+            "title": "Content Encryption"
+          }
+        },
+        "type": "object",
+        "required": [
+          "public_key",
+          "key_id",
+          "algorithm",
+          "content_encryption"
+        ],
+        "title": "PublicKey"
+      },
+      "TransferEnvelope": {
+        "properties": {
+          "amount_cents": {
+            "type": "integer",
+            "maximum": 100000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Cents",
+            "description": "Montant en centimes"
+          },
+          "encrypted_key": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Encrypted Key",
+            "description": "Clé AES-256 chiffrée en RSA-OAEP SHA-256, base64"
+          },
+          "iv": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Iv",
+            "description": "IV AES-GCM de 12 octets, base64"
+          },
+          "ciphertext": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Ciphertext",
+            "description": "JSON {iban, bic?, account_holder_name} chiffré en AES-GCM (ciphertext || tag de 16 octets, comme WebCrypto), base64"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "amount_cents",
+          "encrypted_key",
+          "iv",
+          "ciphertext"
+        ],
+        "title": "TransferEnvelope",
+        "description": "Corps de POST /payments/transfer. Les coordonnées du bénéficiaire sont chiffrées ;\nle montant, non sensible, reste en clair. Le compte débité est celui du porteur du\njeton (un compte par personne)."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}
