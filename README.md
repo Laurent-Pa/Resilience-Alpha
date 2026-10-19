@@ -79,7 +79,7 @@ mkdir -p .secrets
 openssl rand -hex 32 > .secrets/db_password
 openssl rand -hex 32 > .secrets/iban_hmac_key
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
-openssl rand -hex 16 > .secrets/grafana_admin_password
+openssl rand -hex 16 | tr -d '\n' > .secrets/grafana_admin_password
 ```
 
 - `iban_hmac_key` est **obligatoire** : sans lui, le démarrage est refusé.
@@ -111,6 +111,7 @@ Arrêt :
 
 ```bash
 docker compose -f compose.dev.yaml down
+docker compose -f compose.dev.yaml -f observability/docker-compose.observability.yml up -d --build
 # ou : make dev-down
 ```
 
