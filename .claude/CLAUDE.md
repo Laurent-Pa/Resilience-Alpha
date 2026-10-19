@@ -111,17 +111,17 @@ resilience-alpha/
 │       │   ├── store.py
 │       │   └── bus.py
 │       └── tests/
-└── web/
-    ├── package.json
-    ├── pnpm-workspace.yaml        # pay, ops, packages/*
-    ├── packages/
-    │   ├── api-client/            # @ra/api-client : types générés + fetch wrapper
-    │   └── ui/                    # @ra/ui : composants Tailwind partagés
-    ├── pay/                       # React + Vite + TS + Tailwind
-    └── ops/                       # React + Vite + TS + Tailwind + Recharts
+├── frontend/                      # app de paiement (Next.js), servie sous `/`
+│   ├── app/                       # App Router : page.tsx, layout.tsx, payment/
+│   ├── lib/                       # crypto.ts, payments.ts, format.ts — types écrits à la main
+│   ├── Dockerfile
+│   └── package.json
+└── frontend-attack/               # app de déclenchement d'attaque simulée — PAS ENCORE CRÉÉE
+    └── ...                        # dossier indépendant de frontend/, structure à venir
 ```
 
 `services/ml-detector` et `services/rag-assistant` appartiennent au pilier IA. Ils seront ajoutés au même workspace uv par leur propriétaire.
+**Note (19/10) :** l'arborescence `web/` du plan initial (workspace pnpm, `@ra/api-client`, `@ra/ui`, `pay`/`ops` en Vite) n'a pas été retenue. L'app de paiement existe déjà en Next.js dans `frontend/`. La seconde app (déclenchement d'attaque) ira dans un dossier séparé à la racine plutôt que dans `frontend/`, pour garder la même séparation de rôles/clients Keycloak que `web/pay` vs `web/ops` dans le plan initial.
 
 ---
 
@@ -137,7 +137,7 @@ resilience-alpha/
 | remediation-engine | resilience-common, fastapi, uvicorn[standard], sqlalchemy[asyncio], asyncpg, alembic, ansible-runner, pyyaml, sse-starlette |
 | dev (racine)       | pytest, pytest-asyncio, testcontainers[postgres], ruff, mypy                                                                |
 
-**Front :** React 18, Vite, TypeScript, Tailwind v4 (`@tailwindcss/vite`), @tanstack/react-query, react-router-dom, oidc-client-ts, react-oidc-context, recharts (ops seulement), openapi-typescript (api-client).
+**Front (`frontend/`, Next.js** Next.js 16 (App Router), React 19, TypeScript, Tailwind v4 (`@tailwindcss/turbopack`). Types du contrat de paiement écrits à la main, pas générés depuis `contracts/openapi-payment.json`. Authentification Keycloak:  `oidc-client-ts`. La seconde app front (`frontend-attack/`) suivra la même stack.
 
 **Initialisation :**
 
@@ -148,7 +148,11 @@ for s in payment-api prober remediation-engine; do uv init --package --app servi
 # ajouter ensuite resilience-common à chaque service ([tool.uv.sources] resilience-common = { workspace = true })
 
 # Front
-cd web && pnpm create vite pay --template react-ts && pnpm create vite ops --template react-ts
+# Front — app de paiement (déjà initialisée dans frontend/)
+cd frontend && npx create-next-app@latest .   # TypeScript, Tailwind, App Router
+
+# Front — app de déclenchement d'attaque simulée (à créer, structure à confirmer)
+# cd frontend-attack && npx create-next-app@latest .
 ```
 
 **Dockerfile type** (contexte de build = racine du dépôt) :

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from payment_api import __version__, crypto
 from payment_api.api import accounts, admin, payments
@@ -53,6 +54,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(MetricsMiddleware)
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Sondes techniques à la racine (Docker, Prometheus) ; API métier sous /api.
     app.include_router(health_router({"db": lambda: ping(engine)}))

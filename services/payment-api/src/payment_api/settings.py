@@ -8,6 +8,8 @@ class Settings(ServiceSettings):
     service_name: str = "payment-api"
     oidc_audience: str = "payment-api"
 
+    cors_origins: list[str] = ["http://localhost:3000"]
+
     db_host: str = "postgres"
     db_port: int = 5432
     db_name: str = "resilience"
