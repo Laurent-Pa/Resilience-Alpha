@@ -5,6 +5,7 @@ requires-python = "==3.12.*"
 [manifest]
 members = [
     "payment-api",
+    "prober",
     "resilience-alpha",
     "resilience-common",
 ]
@@ -535,6 +536,23 @@ wheels = [
 ]
 
 [[package]]
+name = "prober"
+version = "0.1.0"
+source = { editable = "services/prober" }
+dependencies = [
+    { name = "httpx" },
+    { name = "resilience-common" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "resilience-common", editable = "libs/common" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+]
+
+[[package]]
 name = "prometheus-client"
 version = "0.26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -746,6 +764,7 @@ name = "resilience-common"
 version = "0.1.0"
 source = { editable = "libs/common" }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "prometheus-client" },
@@ -756,6 +775,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=43" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "prometheus-client", specifier = ">=0.21" },

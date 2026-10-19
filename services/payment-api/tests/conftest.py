@@ -12,10 +12,10 @@ from sqlalchemy import text
 from testcontainers.community.postgres import PostgresContainer
 
 from payment_api.bootstrap import run_migrations
-from payment_api.crypto import seal
 from payment_api.main import create_app
 from payment_api.seed import USERS, seed
 from payment_api.settings import Settings
+from resilience_common.crypto import seal
 from resilience_common.testing import JwksServer, RsaKey, make_token
 
 ISSUER = "https://test.local/auth/realms/resilience"

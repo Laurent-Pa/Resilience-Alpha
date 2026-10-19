@@ -8,7 +8,7 @@ Protocole (compatible WebCrypto) :
   4. il chiffre la clé AES brute (32 octets) en RSA-OAEP, hash SHA-256 ;
   5. il envoie encrypted_key, iv, ciphertext en base64 standard.
 
-`seal()` est l'implémentation de référence côté client (tests, prober).
+`seal()` (implémentation de référence côté client) vit dans `resilience_common.crypto`.
 
 Les IBAN ne sont jamais stockés en clair : on garde un HMAC-SHA256 avec une clé secrète
 (un simple SHA-256 se casserait par force brute, l'espace des IBAN étant petit) et une
@@ -19,23 +19,19 @@ import base64
 import binascii
 import hashlib
 import hmac
-import json
-import os
 
 from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from payment_api.domain.rules import UndecryptablePayload
 from payment_api.settings import Settings
+from resilience_common.crypto import IV_BYTES, OAEP
 
 ALGORITHM = "RSA-OAEP-256"
 CONTENT_ENCRYPTION = "A256GCM"
-IV_BYTES = 12
 AES_KEY_BYTES = 32
-
-_OAEP = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
 
 
 class TransferCipher:
@@ -72,27 +68,12 @@ class TransferCipher:
             data = base64.b64decode(ciphertext, validate=True)
             if len(nonce) != IV_BYTES:
                 raise ValueError("iv")
-            aes_key = self._private_key.decrypt(wrapped, _OAEP)
+            aes_key = self._private_key.decrypt(wrapped, OAEP)
             if len(aes_key) != AES_KEY_BYTES:
                 raise ValueError("aes key")
             return AESGCM(aes_key).decrypt(nonce, data, None)
         except (ValueError, binascii.Error, InvalidTag) as exc:
             raise UndecryptablePayload() from exc
-
-
-def seal(public_pem: str, payload: dict) -> dict[str, str]:
-    """Chiffre `payload` comme le fait le front. Renvoie {encrypted_key, iv, ciphertext}."""
-    public_key = serialization.load_pem_public_key(public_pem.encode())
-    assert isinstance(public_key, rsa.RSAPublicKey)
-    aes_key = AESGCM.generate_key(bit_length=256)
-    nonce = os.urandom(IV_BYTES)
-    ciphertext = AESGCM(aes_key).encrypt(nonce, json.dumps(payload).encode(), None)
-    b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
-    return {
-        "encrypted_key": b64(public_key.encrypt(aes_key, _OAEP)),
-        "iv": b64(nonce),
-        "ciphertext": b64(ciphertext),
-    }
 
 
 class Pseudonymizer:

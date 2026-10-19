@@ -4,7 +4,9 @@
 #   openssl rand -hex 16 > .secrets/db_password
 #   openssl rand -hex 32 > .secrets/iban_hmac_key
 #   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
-# Keycloak sera ajouté à l'étape 2 (realm-resilience.json).
+#   echo <secret du client prober dans Keycloak> > .secrets/prober_client_secret
+# Keycloak lit ses secrets depuis ./.secrets/keycloak.env (PROBER_CLIENT_SECRET,
+# REMEDIATION_CLIENT_SECRET, TEST_USERS_PASSWORD, KC_BOOTSTRAP_ADMIN_*).
 
 secrets:
   db_password:
@@ -13,8 +15,31 @@ secrets:
     file: ./.secrets/iban_hmac_key
   rsa_private_key:
     file: ./.secrets/rsa_private_key
+  prober_client_secret:
+    file: ./.secrets/prober_client_secret
 
 services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0
+    command: ["start-dev", "--import-realm"]
+    # Secrets (bootstrap admin + ${...} du realm) : ./.secrets/keycloak.env, gitignored.
+    # Le générer depuis les fichiers .secrets/ : voir le README / les instructions de l'étape 2.
+    env_file: ./.secrets/keycloak.env
+    environment:
+      KC_HTTP_RELATIVE_PATH: /auth
+      # iss figé à KC_HOSTNAME pour TOUS les jetons (y compris le token du prober récupéré
+      # en interne via keycloak:8080). Pas de backchannel dynamique en dev, sinon l'iss varie
+      # selon l'hôte appelant et payment-api rejette (piège iss, §13). Le JWKS reste interne
+      # car payment-api a OIDC_JWKS_URL en dur et n'utilise pas le discovery.
+      # Le /auth doit être DANS KC_HOSTNAME : en KC26 l'iss dérive de KC_HOSTNAME sans y
+      # réappliquer KC_HTTP_RELATIVE_PATH. Cohérent avec la prod (KC_HOSTNAME=.../auth, §6).
+      KC_HOSTNAME: http://localhost:8080/auth
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    ports: ["127.0.0.1:8080:8080"]
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -39,13 +64,27 @@ services:
     environment:
       DB_HOST: postgres
       LOG_LEVEL: INFO
-      OIDC_ISSUER: https://192.168.137.1/auth/realms/resilience
+      # En dev, l'hôte "public" est localhost:8080 (pas de WAF). Le JWKS reste interne (§6).
+      OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
     secrets: [db_password, iban_hmac_key, rsa_private_key]
     ports: ["127.0.0.1:8001:8000"]
     depends_on:
       postgres:
         condition: service_healthy
+      keycloak:
+        condition: service_started
+
+  # En dev, pas de WAF : la sonde tape payment-api directement (en prod : https://192.168.137.1).
+  prober:
+    build:
+      context: .
+      dockerfile: services/prober/Dockerfile
+    environment:
+      TARGET_URL: http://payment-api:8000
+      KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
+    secrets: [prober_client_secret]
+    ports: ["127.0.0.1:8002:8000"]
     logging:
       driver: loki
       options:

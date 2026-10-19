@@ -1,0 +1,17 @@
+[project]
+name = "prober"
+version = "0.1.0"
+description = "Sonde synthétique : un vrai virement de 1 centime toutes les 5 s via le WAF"
+requires-python = ">=3.12"
+dependencies = [
+    "resilience-common",
+    "httpx>=0.27",
+    "uvicorn[standard]>=0.32",
+]
+
+[tool.uv.sources]
+resilience-common = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"

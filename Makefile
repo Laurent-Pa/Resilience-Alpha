@@ -1,7 +1,7 @@
 # Cibles de développement. Sous Windows sans `make`, lancer les commandes à la main.
 UV ?= uv
 
-.PHONY: sync test test-common test-payment lint fmt export-openapi check-openapi gen-types seed dev-up dev-down
+.PHONY: sync test test-common test-payment test-prober lint fmt export-openapi check-openapi gen-types seed dev-up dev-down
 
 sync:
 	$(UV) sync --all-packages
@@ -14,6 +14,9 @@ test-common:
 
 test-payment:
 	$(UV) run pytest services/payment-api
+
+test-prober:
+	$(UV) run pytest services/prober
 
 lint:
 	$(UV) run ruff check .
