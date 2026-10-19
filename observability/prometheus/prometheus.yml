@@ -1,0 +1,26 @@
+# ===================================================================
+# CONFIGURATION PROMETHEUS
+# Chaque "job" = une cible à surveiller.
+# Les cibles sont désignées par le NOM DU CONTENEUR Docker + le port.
+# ===================================================================
+global:
+  scrape_interval: 15s        # Prometheus interroge ses cibles toutes les 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # --- Prometheus se surveille lui-même (utile pour vérifier qu'il tourne) ---
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # --- L'API MÉTIER (équipe DEV) ---
+
+  - job_name: 'payment-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['payment-api:8000']
+
+  # --- Exemple de 2e service métier (auth, par ex.) ---
+  # - job_name: 'auth'
+  #   static_configs:
+  #     - targets: ['auth:8080']

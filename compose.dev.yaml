@@ -28,6 +28,9 @@ services:
       interval: 5s
       timeout: 2s
       retries: 10
+    networks:
+      - default
+      - monitoring
 
   payment-api:
     build:
@@ -43,3 +46,28 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+    networks:
+      - default
+      - monitoring
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8001/api/payments
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      - payment-api
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+
+networks:
+  default: {}
+  monitoring:
+    external: false
