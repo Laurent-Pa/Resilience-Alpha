@@ -1,0 +1,45 @@
+# Environnement de développement LOCAL minimal (pas la prod : compose.yaml est géré par l'infra).
+# Prérequis : fichiers dans ./.secrets/ (gitignored), par exemple :
+#   mkdir -p .secrets
+#   openssl rand -hex 16 > .secrets/db_password
+#   openssl rand -hex 32 > .secrets/iban_hmac_key
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
+# Keycloak sera ajouté à l'étape 2 (realm-resilience.json).
+
+secrets:
+  db_password:
+    file: ./.secrets/db_password
+  iban_hmac_key:
+    file: ./.secrets/iban_hmac_key
+  rsa_private_key:
+    file: ./.secrets/rsa_private_key
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: resilience
+      POSTGRES_USER: payment_app
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_app -d resilience"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  payment-api:
+    build:
+      context: .
+      dockerfile: services/payment-api/Dockerfile
+    environment:
+      DB_HOST: postgres
+      LOG_LEVEL: INFO
+      OIDC_ISSUER: https://192.168.137.1/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+    secrets: [db_password, iban_hmac_key, rsa_private_key]
+    ports: ["127.0.0.1:8001:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
