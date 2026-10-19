@@ -40,17 +40,24 @@ resilience-alpha/
 │       │   ├── export_openapi.py
 │       │   └── seed.py             # comptes fictifs, idempotent
 │       └── tests/
-└── frontend/                       # app de paiement (Next.js), servie sous `/`
-    ├── app/
-    │   ├── page.tsx                 # accueil
-    │   └── payment/page.tsx         # formulaire de virement
-    ├── lib/
-    │   ├── crypto.ts                # chiffrement hybride RSA-OAEP + AES-GCM (contrat §7)
-    │   ├── crypto.test.ts           # tests Vitest
-    │   ├── payments.ts              # client API (clé publique, virement, retry sur decryption_failed)
-    │   └── format.ts                # formatage IBAN, conversion euros/centimes
-    ├── .env.example                 # à copier en .env.local (gitignoré)
-    └── Dockerfile
+├── frontend/                       # app de paiement (Next.js), servie sous `/`
+│   ├── app/
+│   │   ├── page.tsx                 # accueil
+│   │   └── payment/page.tsx         # formulaire de virement
+│   ├── lib/
+│   │   ├── crypto.ts                # chiffrement hybride RSA-OAEP + AES-GCM (contrat §7)
+│   │   ├── crypto.test.ts           # tests Vitest
+│   │   ├── payments.ts              # client API (clé publique, virement, retry sur decryption_failed)
+│   │   └── format.ts                # formatage IBAN, conversion euros/centimes
+│   ├── .env.example                 # à copier en .env.local (gitignoré)
+│   └── Dockerfile
+└── observability
+    ├── grafana/ provisioning/datasources
+    │   └── datasources.yml          # sources de données pour brancher Prometheus et Loki
+    ├── loki
+    │    └── loki-config.yml      # version minimale, mono-instance, stockage local              
+    └── prometheus
+         └── prometheus.yml      # cibles désignées par le nom du conteneur Docker + Port      
 ```
 
 `services/prober`, `services/remediation-engine` et `frontend-attack/` ne sont pas encore créés dans ce dépôt (voir `.claude/CLAUDE.md` §11-12 pour le plan). L'authentification Keycloak/OIDC côté frontend n'est pas encore implémentée : c'est la prochaine étape, sur une branche dédiée.
@@ -72,6 +79,7 @@ mkdir -p .secrets
 openssl rand -hex 32 > .secrets/db_password
 openssl rand -hex 32 > .secrets/iban_hmac_key
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
+openssl rand -hex 16 > .secrets/grafana_admin_password
 ```
 
 - `iban_hmac_key` est **obligatoire** : sans lui, le démarrage est refusé.
