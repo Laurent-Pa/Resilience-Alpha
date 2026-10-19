@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, SyntheticEvent } from "react";
-import { submitTransfer } from "@/lib/payments";
+import { submitTransfer, extractErrorMessage } from "@/lib/payments";
 import {
   maskIban,
   eurosToCents,
@@ -30,7 +30,7 @@ export default function PaymentPage() {
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const amountInEuros = Number.parseFloat(amount);
+    const amountInEuros = parseFloat(amount);
     if (Number.isNaN(amountInEuros) || amountInEuros <= 0) {
       setSubmission({
         status: "error",
@@ -59,13 +59,14 @@ export default function PaymentPage() {
           amountCents,
         });
       } else {
-        // TODO: affiner une fois le schéma d'erreur confirmé via Swagger
+        const backendMessage = extractErrorMessage(result.body);
         setSubmission({
           status: "error",
           message:
+            backendMessage ??
             "Le virement n'a pas pu être traité (code " +
-            result.status +
-            "). Merci de vérifier vos informations et réessayer.",
+              result.status +
+              "). Merci de vérifier vos informations et réessayer.",
         });
       }
     } catch {
