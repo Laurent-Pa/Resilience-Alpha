@@ -6,7 +6,7 @@ from payment_api.seed import SEED_ACCOUNTS, account_id, seed_account, seed_iban
 ADMIN_PAYMENTS = "/api/admin/payments"
 TRANSFER = "/api/payments/transfer"
 
-OPENING_TXS = sum(1 for a in SEED_ACCOUNTS if a.opening_cents > 0)
+OPENING_TXS = sum(1 for a in SEED_ACCOUNTS if a.opening > 0)
 
 
 def acct(name: str) -> uuid.UUID:
