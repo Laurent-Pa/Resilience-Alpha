@@ -1,0 +1,25 @@
+.ra-admin {
+  --ra-background: #ffffff;
+  --ra-foreground: #0a0a0a;
+  --ra-brand: #59c144;
+  --ra-brand-hover: #4ca425;
+  --ra-input-text: #636060;
+
+  --ra-border-primary: #e4e4e4;
+  --ra-background-secondary: #f9f9f9;
+
+  --ra-status-ok-text: #259800;
+  --ra-status-ok-bg: #f0feed;
+  --ra-status-alert-text: #dc2626;
+  --ra-status-alert-bg: #feeded;
+  --ra-status-warning-text: #c2410c;
+  --ra-status-warning-bg: #fff1e8;
+
+  --ra-sidebar-width: 224px;
+  --ra-navbar-height: 64px;
+  --ra-user-menu-width: 192px;
+
+  font-family: var(--font-poppins), sans-serif;
+  background: var(--ra-background);
+  color: var(--ra-foreground);
+}
