@@ -1,6 +1,6 @@
 # HANDOFF — PROJECT RESILIENCE-ALPHA — Pilier Développement
 
-Document de reprise de contexte pour Claude Code. Il décrit **le périmètre code uniquement**. L'infra (Compose, Ansible, Prometheus/Grafana/Loki), l'IA (ml-detector, rag-assistant), la cyber (WAF, Vault, SIEM, Red Team) et la gouvernance sont portées par d'autres membres. Seules leurs **interfaces** avec le code sont décrites ici.
+Document de reprise de contexte pour Claude Code. Il décrit **le périmètre code uniquement**. L'infra (Compose/Kubernetes, Ansible, Prometheus/Grafana/Loki), l'IA (ml-detector, rag-assistant), la cyber (WAF, Vault, SIEM, Red Team) et la gouvernance sont portées par d'autres membres. Seules leurs **interfaces** avec le code sont décrites ici.
 
 ---
 
@@ -24,6 +24,7 @@ Un conteneur redémarré ne vaut pas preuve.
 
 - services en Node.js, Python/FastAPI ou Go → **choix : Python/FastAPI** ;
 - dashboard de supervision en **React + Tailwind** ;
+- stack d'observabilité : **Prometheus** (métriques), **Grafana** (visualisation), **Loki** (centralisation des journaux) ;
 - microservices obligatoires : base de données, API métier, service d'authentification, frontal web ;
 - moteur de remédiation, plus une interface de supervision montrant les composants, les événements, les alertes et l'avancement de la reprise ;
 - aucune donnée bancaire réelle ; aucun secret en clair dans le dépôt ;
@@ -43,9 +44,12 @@ Un conteneur redémarré ne vaut pas preuve.
 6. **Le moteur n'accède jamais à `docker.sock` directement.** Les playbooks passent par un `docker-socket-proxy` (géré par l'infra).
 7. **Les contrats d'abord** : les OpenAPI et JSON Schemas dans `contracts/` sont la source de vérité. Les types TypeScript en sont **générés**, jamais écrits à la main.
 8. **Le dashboard ops reçoit les événements en SSE** depuis le moteur. Le navigateur n'accède jamais directement à Prometheus.
-9. **Un compte bancaire par personne.** Le compte débité se déduit du jeton ; aucun identifiant de compte source n'est envoyé (ajout du 19/10).
-10. **Coordonnées bancaires chiffrées de bout en bout.** Le bénéficiaire (IBAN, BIC, nom) est chiffré par le navigateur (RSA-OAEP + AES-GCM) ; l'IBAN n'est jamais stocké ni journalisé en clair (HMAC + forme masquée). Voir §7 (ajout du 19/10).
-11. **Routes métier sous `/api`**, sondes techniques (`/health/*`, `/metrics`) à la racine (ajout du 19/10).
+9. **Deux niveaux de supervision, complémentaires** (ajout du 19/10) :
+   - `web-ops` (React, dev) : la vue **démo et remédiation** (SLI du prober, timeline des incidents, MTTD/MTTR) ;
+   - **Grafana** (infra) : la vue **technique**, sur Prometheus (scrape des `/metrics`) et Loki (logs JSON stdout). Le code n'y contribue que par des métriques et des logs conformes au §5 ; dashboards, scrape et collecte sont portés par l'infra.
+10. **Un compte bancaire par personne.** Le compte débité se déduit du jeton ; aucun identifiant de compte source n'est envoyé (ajout du 19/10).
+11. **Coordonnées bancaires chiffrées de bout en bout.** Le bénéficiaire (IBAN, BIC, nom) est chiffré par le navigateur (RSA-OAEP + AES-GCM) ; l'IBAN n'est jamais stocké ni journalisé en clair (HMAC + forme masquée). Voir §7 (ajout du 19/10).
+12. **Routes métier sous `/api`**, sondes techniques (`/health/*`, `/metrics`) à la racine (ajout du 19/10).
 
 ---
 
@@ -87,7 +91,7 @@ resilience-alpha/
 │   │   │   ├── domain/            # règles pures, sans I/O : rules.py, iban.py, bic.py
 │   │   │   ├── repo/              # requêtes SQLAlchemy : accounts, transactions, ledger
 │   │   │   ├── service.py         # cas d'usage transactionnel (virement)
-│   │   │   ├── crypto.py          # déchiffrement hybride, seal() de référence, HMAC IBAN
+│   │   │   ├── crypto.py          # déchiffrement hybride, HMAC IBAN (seal() : resilience_common.crypto)
 │   │   │   ├── models.py, db.py, schemas.py, settings.py
 │   │   │   ├── bootstrap.py       # migrations + seed au démarrage
 │   │   │   ├── export_openapi.py
@@ -202,6 +206,7 @@ Référence complète : `services/payment-api/Dockerfile` (migrations + seed ava
   - Les noms d'événements sont pointés : `payment.created`, `payment.rejected`, `remediation.transition`, `probe.result`, etc.
 - **Secrets** : lus depuis des fichiers (`/run/secrets/<nom>` ou chemin fourni par Vault Agent). Jamais dans le code, jamais dans un `.env` commité.
 - OpenAPI exportée dans `contracts/` via `make export-openapi`. La CI vérifie que l'export est identique au fichier versionné.
+- **Observabilité (contrat avec l'infra)** : chaque service expose `/metrics` sur son port interne 8000 (cible Prometheus `job=<service>`) ; les logs JSON sur stdout sont collectés par Loki, qui indexe uniquement `service` et `level` (les autres champs, dont `trace_id`, restent dans la ligne pour éviter l'explosion de cardinalité). Toute nouvelle métrique est listée dans la section du service.
 - Au moins un test automatisé par module métier.
 - Dockerfile avec utilisateur non-root.
 
@@ -227,6 +232,9 @@ Référence complète : `services/payment-api/Dockerfile` (migrations + seed ava
   | carol | `33333333-3333-4333-8333-333333333333` |
   | operator | `44444444-4444-4444-8444-444444444444` |
   | service account `prober` | `55555555-5555-4555-8555-555555555555` |
+  | service account `remediation-engine` (rôle `ops`) | `66666666-6666-4666-8666-666666666666` |
+
+  Secrets des clients et mot de passe des utilisateurs de test : placeholders `${PROBER_CLIENT_SECRET}`, `${REMEDIATION_CLIENT_SECRET}`, `${TEST_USERS_PASSWORD}` dans l'export, remplacés par Keycloak à l'import depuis ses variables d'environnement.
 
   Si le `sub` du jeton ne correspond à aucun de ces UUID, `/api/accounts/me` répond 404.
 - **Sécurité :** `bruteForceProtected: true`, durée de vie des jetons d'accès de 5 minutes, `eventsEnabled` et `adminEventsEnabled` activés (sources SIEM).
@@ -331,7 +339,7 @@ Erreurs métier au format `{"detail": {"code": "...", "message": "..."}}`. Les m
 - Toute erreur de déchiffrement → 400 `decryption_failed`, sans détail (pas d'oracle). Le front recharge alors la clé publique et renvoie **une fois** avec la **même** `Idempotency-Key`.
 - L'empreinte d'idempotence est calculée sur les données **déchiffrées** : un rechiffrement de la même requête reste un rejeu (200).
 - `src_account` dans le corps → 422 (champ interdit).
-- Implémentation de référence côté client : `seal()` dans `payment_api/crypto.py` (utilisée par les tests et le prober).
+- Implémentation de référence côté client : `seal()` dans `resilience_common/crypto.py` (utilisée par les tests et le prober).
 
 ### Transfert (règles critiques, `service.py`)
 
@@ -629,7 +637,7 @@ Composants Card, Badge, StatusDot (`ok`/`degraded`/`down`), Table, Button, Spinn
 
 | Pilier      | Le dev fournit                                                                                    | Le dev attend                                                                                                                                                                                                  | Mock en attendant                                                                  |
 | ----------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Infra       | Dockerfiles, ports internes (8000), health, besoins réseau, variables d'environnement documentées | `compose.yaml`, WAF routant `/`, `/ops`, `/api/payments` + `/api/accounts` + `/api/admin` (vers payment-api, **sans réécriture de chemin**), `/api/remediation`, `/auth` ; playbooks `block_ip.yml`, `recycle_service.yml`, `kill_db_conns.yml` ; Alertmanager configuré vers `POST /alerts` avec HMAC | `FakeExecutor` ; `compose.dev.yaml` local minimal (postgres + keycloak + services) |
+| Infra       | Dockerfiles, ports internes (8000), health, besoins réseau, variables d'environnement documentées, liste des métriques et format des logs (§5) | Stack Prometheus + Grafana + Loki (scrape des `/metrics`, collecte des logs stdout, dashboards techniques) ; `compose.yaml`, WAF routant `/`, `/ops`, `/api/payments` + `/api/accounts` + `/api/admin` (vers payment-api, **sans réécriture de chemin**), `/api/remediation`, `/auth` ; playbooks `block_ip.yml`, `recycle_service.yml`, `kill_db_conns.yml` ; Alertmanager configuré vers `POST /alerts` avec HMAC | `FakeExecutor` ; `compose.dev.yaml` local minimal (postgres + keycloak + services) |
 | IA          | Métriques exposées ; format de `POST /alerts`                                                     | Webhook ml-detector conforme à `alert.schema.json` ; `rag-assistant POST /ask → {answer, sources[]}`                                                                                                           | Script `scripts/fake_alert.py` qui signe et poste une alerte                       |
 | Cyber       | `X-Request-ID`, `src_ip` dans les logs, liste fermée des actions, IBAN jamais en clair (chiffrement navigateur, HMAC au repos) | Chemins Vault des secrets (secret client du prober, secret client du moteur, mot de passe DB, secret HMAC des webhooks, **`iban_hmac_key`**, **`rsa_private_key`** de payment-api)                                                                                                     | Fichiers dans `./.secrets/` (gitignored)                                           |
 | Gouvernance | MTTD et MTTR mesurés, journal d'audit des transitions                                             | RTO cible, utilisé comme `timeout_s`                                                                                                                                                                           | Valeurs par défaut du YAML                                                         |
@@ -640,7 +648,7 @@ Composants Card, Badge, StatusDot (`ok`/`degraded`/`down`), Table, Button, Spinn
 
 Chaque étape se termine par des tests verts et un commit. **Ne pas passer à l'étape suivante sans les critères d'acceptation.**
 
-> **Avancement au 19/10 :** étapes 0, 1 et 3 **faites** (lint vert, 20 tests `libs/common`, 67 tests payment-api). Étape 2 (realm) en cours côté collègue : reprendre les UUID du §6.
+> **Avancement au 19/10 :** étapes 0, 1 et 3 **faites** (lint vert, 20 tests `libs/common`, 67 tests payment-api). Étape 4 (prober) **codée** (5 tests, image OK) ; critère d'acceptation à rejouer quand Keycloak (étape 2, en cours côté collègue : reprendre les UUID du §6) sera dans `compose.dev.yaml`.
 
 ### Étape 0 — Squelette (lundi)
 

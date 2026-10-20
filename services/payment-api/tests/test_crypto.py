@@ -4,8 +4,9 @@ import json
 
 import pytest
 
-from payment_api.crypto import Pseudonymizer, TransferCipher, seal
+from payment_api.crypto import Pseudonymizer, TransferCipher
 from payment_api.domain.rules import UndecryptablePayload
+from resilience_common.crypto import seal
 
 
 @pytest.fixture(scope="module")

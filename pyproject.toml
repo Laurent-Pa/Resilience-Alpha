@@ -41,7 +41,7 @@ extend-immutable-calls = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["resilience_common", "payment_api"]
+known-first-party = ["resilience_common", "payment_api", "prober"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib -ra"

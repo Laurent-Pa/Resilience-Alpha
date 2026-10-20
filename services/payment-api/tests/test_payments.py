@@ -5,7 +5,6 @@ import uuid
 import pytest
 from sqlalchemy import func, select, text
 
-from payment_api.crypto import seal
 from payment_api.domain import iban
 from payment_api.domain.bic import DEFAULT_BIC
 from payment_api.models import LedgerEntry, Transaction
@@ -17,6 +16,7 @@ from payment_api.seed import (
     seed_account,
     seed_iban,
 )
+from resilience_common.crypto import seal
 
 OPENING_TXS = sum(1 for a in SEED_ACCOUNTS if a.opening_cents > 0)
 
