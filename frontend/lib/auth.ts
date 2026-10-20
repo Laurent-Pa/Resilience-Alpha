@@ -28,6 +28,22 @@ export async function getAccessToken(): Promise<string | null> {
   return user && !user.expired ? user.access_token : null;
 }
 
+/**
+ * Décode les rôles realm portés par le jeton d'accès (base64url, sans
+ * vérification de signature : ceci ne sert qu'à décider quoi afficher côté
+ * client, par ex. le lien "Administration" pour les comptes avec le rôle ops).
+ */
+export function rolesFromAccessToken(accessToken: string): string[] {
+  try {
+    const payload = accessToken.split(".")[1];
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const claims = JSON.parse(json) as { realm_access?: { roles?: string[] } };
+    return claims.realm_access?.roles ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** Redirige vers Keycloak ; on revient ensuite sur `returnTo`. */
 export function login(returnTo = window.location.pathname): Promise<void> {
   return userManager().signinRedirect({ state: returnTo });

@@ -24,7 +24,7 @@ export default function CallbackPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
-      <p className="text-gray-600">
+      <p className="text-[var(--ra-input-text)]">
         {error ? "Échec de la connexion." : "Connexion en cours..."}
       </p>
     </main>
