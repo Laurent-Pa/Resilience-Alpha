@@ -25,22 +25,32 @@ function AdminPaymentsContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cancelledRef: { current: boolean }) => {
     setIsLoading(true);
     setError(null);
     try {
       const data = await fetchAdminPayments(page, pageSize, accessToken);
+      if (cancelledRef.current) return;
       setItems(data.items);
       setTotal(data.total);
     } catch {
-      setError("Impossible de charger les paiements. Réessayez dans un instant.");
+      if (!cancelledRef.current) {
+        setError("Impossible de charger les paiements. Réessayez dans un instant.");
+      }
     } finally {
-      setIsLoading(false);
+      if (!cancelledRef.current) setIsLoading(false);
     }
   }, [page, pageSize, accessToken]);
 
   useEffect(() => {
-    load();
+    const cancelledRef = { current: false };
+    // Fetch de données réseau au montage / changement de page, pas un "miroir" de props :
+    // cas explicitement documenté par la règle comme faux positif légitime.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load(cancelledRef);
+    return () => {
+      cancelledRef.current = true;
+    };
   }, [load]);
 
   function handlePageSizeChange(size: number) {

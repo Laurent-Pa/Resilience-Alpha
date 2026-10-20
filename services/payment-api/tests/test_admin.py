@@ -83,7 +83,8 @@ async def test_admin_payments_pagination(client, auth, envelope):
         r = await client.post(TRANSFER, json=payload, headers=auth("alice") | key())
         assert r.status_code == 201
 
-    r = await client.get(ADMIN_PAYMENTS, params={"page": 1, "page_size": 3}, headers=auth("operator"))
+    page1_params = {"page": 1, "page_size": 3}
+    r = await client.get(ADMIN_PAYMENTS, params=page1_params, headers=auth("operator"))
     assert r.status_code == 200
     body = r.json()
     assert body["page"] == 1
@@ -91,7 +92,10 @@ async def test_admin_payments_pagination(client, auth, envelope):
     assert len(body["items"]) == 3
     assert body["total"] == OPENING_TXS + 5
 
-    r2 = await client.get(ADMIN_PAYMENTS, params={"page": 2, "page_size": 3}, headers=auth("operator"))
+    page2_params = {"page": 2, "page_size": 3}
+    r2 = await client.get(ADMIN_PAYMENTS, params=page2_params, headers=auth("operator"))
     assert r2.status_code == 200
     body2 = r2.json()
-    assert {item["id"] for item in body["items"]}.isdisjoint({item["id"] for item in body2["items"]})
+    page1_ids = {item["id"] for item in body["items"]}
+    page2_ids = {item["id"] for item in body2["items"]}
+    assert page1_ids.isdisjoint(page2_ids)
