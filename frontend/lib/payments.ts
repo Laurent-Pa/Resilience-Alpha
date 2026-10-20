@@ -46,7 +46,7 @@ export interface Payment {
   src_account: string;
   dst_account: string;
   dst_iban_masked: string;
-  amount_cents: number;
+  amount: string; // euros, ex. "50.05"
   status: "COMPLETED" | "REJECTED";
   created_at: string;
 }
@@ -112,17 +112,17 @@ async function getPublicKey(forceRefresh = false): Promise<CryptoKey> {
  */
 export async function submitTransfer(
   payload: TransferPayload,
-  amountCents: number
+  amount: string
 ): Promise<TransferResult> {
   // Un seul Idempotency-Key pour toute la tentative, y compris le retry,
   // pour que le backend identifie bien qu'il s'agit du même virement
   const idempotencyKey = crypto.randomUUID();
-  return attemptTransfer(payload, amountCents, idempotencyKey, true);
+  return attemptTransfer(payload, amount, idempotencyKey, true);
 }
 
 async function attemptTransfer(
   payload: TransferPayload,
-  amountCents: number,
+  amount: string,
   idempotencyKey: string,
   allowRetry: boolean
 ): Promise<TransferResult> {
@@ -144,7 +144,7 @@ async function attemptTransfer(
     },
     body: JSON.stringify({
       ...encrypted,
-      amount_cents: amountCents,
+      amount,
     }),
   });
 
@@ -157,7 +157,7 @@ async function attemptTransfer(
 
     if (allowRetry && isDecryptionFailure) {
       await getPublicKey(true);
-      return attemptTransfer(payload, amountCents, idempotencyKey, false);
+      return attemptTransfer(payload, amount, idempotencyKey, false);
     }
   }
 

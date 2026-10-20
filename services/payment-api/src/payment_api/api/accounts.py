@@ -31,5 +31,5 @@ async def my_account(
         bic=account.bic,
         label=account.label,
         currency=account.currency,
-        balance_cents=balance,
+        balance=balance,
     )

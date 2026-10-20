@@ -360,9 +360,12 @@
             "type": "string",
             "title": "Currency"
           },
-          "balance_cents": {
-            "type": "integer",
-            "title": "Balance Cents"
+          "balance": {
+            "type": "string",
+            "title": "Balance",
+            "examples": [
+              "1500.00"
+            ]
           }
         },
         "type": "object",
@@ -372,7 +375,7 @@
           "bic",
           "label",
           "currency",
-          "balance_cents"
+          "balance"
         ],
         "title": "Account"
       },
@@ -483,9 +486,12 @@
               "FR****8995"
             ]
           },
-          "amount_cents": {
-            "type": "integer",
-            "title": "Amount Cents"
+          "amount": {
+            "type": "string",
+            "title": "Amount",
+            "examples": [
+              "50.05"
+            ]
           },
           "status": {
             "type": "string",
@@ -507,7 +513,7 @@
           "src_account",
           "dst_account",
           "dst_iban_masked",
-          "amount_cents",
+          "amount",
           "status",
           "created_at"
         ],
@@ -547,12 +553,19 @@
       },
       "TransferEnvelope": {
         "properties": {
-          "amount_cents": {
-            "type": "integer",
-            "maximum": 100000000.0,
-            "exclusiveMinimum": 0.0,
-            "title": "Amount Cents",
-            "description": "Montant en centimes"
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Amount",
+            "description": "Montant en euros, 2 décimales max (ex. \"50.05\")"
           },
           "encrypted_key": {
             "type": "string",
@@ -576,7 +589,7 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "amount_cents",
+          "amount",
           "encrypted_key",
           "iv",
           "ciphertext"

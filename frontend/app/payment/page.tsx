@@ -17,8 +17,7 @@ function LogoutButton() {
 }
 import {
   maskIban,
-  eurosToCents,
-  formatCentsAsEuros,
+  formatEuros,
   formatIbanInput,
 } from "@/lib/format";
 import type { TransferPayload } from "@/lib/crypto";
@@ -26,7 +25,7 @@ import type { TransferPayload } from "@/lib/crypto";
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
-  | { status: "success"; maskedIban: string; amountCents: number }
+  | { status: "success"; maskedIban: string; amount: string }
   | { status: "error"; message: string };
 
 export default function PaymentPage() {
@@ -94,8 +93,6 @@ export default function PaymentPage() {
       return;
     }
 
-    const amountCents = eurosToCents(amountInEuros);
-
     const payload: TransferPayload = {
       iban: iban.replace(/\s+/g, "").toUpperCase(),
       account_holder_name: accountHolderName,
@@ -105,13 +102,13 @@ export default function PaymentPage() {
     setSubmission({ status: "submitting" });
 
     try {
-      const result = await submitTransfer(payload, amountCents);
+      const result = await submitTransfer(payload, amount);
 
       if (result.ok) {
         setSubmission({
           status: "success",
           maskedIban: maskIban(payload.iban),
-          amountCents,
+          amount,
         });
       } else {
         const backendMessage = extractErrorMessage(result.body);
@@ -140,7 +137,7 @@ export default function PaymentPage() {
         <div className="w-full max-w-md rounded-2xl border border-gray-200 p-8 text-center">
           <h1 className="text-2xl font-bold">Virement initié</h1>
           <p className="mt-4 text-gray-600">
-            Virement de {formatCentsAsEuros(submission.amountCents)} vers{" "}
+            Virement de {formatEuros(submission.amount)} vers{" "}
             {submission.maskedIban} enregistré avec succès.
           </p>
           <p className="mt-2 text-sm text-gray-400">

@@ -66,7 +66,7 @@ async def create_transfer(
             body.encrypted_key, body.iv, body.ciphertext
         )
         beneficiary = Beneficiary.parse(plaintext)
-        req = TransferRequest(beneficiary.iban, beneficiary.bic, body.amount_cents)
+        req = TransferRequest(beneficiary.iban, beneficiary.bic, body.amount)
         tx, created = await service.transfer(
             session, idempotency_key, claims.sub, req, request.app.state.pseudonymizer
         )
@@ -76,7 +76,7 @@ async def create_transfer(
             "payment.rejected",
             reason=exc.code,
             status=exc.http_status,
-            amount_cents=body.amount_cents,
+            amount=str(body.amount),
         )
         raise HTTPException(exc.http_status, {"code": exc.code, "message": exc.message}) from exc
     finally:
@@ -84,7 +84,7 @@ async def create_transfer(
 
     if created:
         PAYMENTS.labels("completed").inc()
-        log.info("payment.created", tx_id=str(tx.id), amount_cents=tx.amount_cents, status=201)
+        log.info("payment.created", tx_id=str(tx.id), amount=str(tx.amount), status=201)
     else:
         PAYMENTS.labels("replayed").inc()
         log.info("payment.replayed", tx_id=str(tx.id), status=200)
