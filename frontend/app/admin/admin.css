@@ -1,0 +1,3 @@
+/* Les tokens de couleur/police ont été déménagés dans app/globals.css (racine),
+   pour que /admin et les pages publiques (/payment, /login, /callback) partagent
+   la même charte. Ce fichier ne contient plus rien de spécifique à /admin. */

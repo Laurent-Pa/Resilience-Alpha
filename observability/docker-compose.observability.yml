@@ -5,7 +5,7 @@ name: resilience-alpha
   # ---------------------------------------------------------------
 secrets:
   grafana_admin_password:
-    file: ../.secrets/grafana_admin_password
+    file: .secrets/grafana_admin_password
 
 services:
   # ---------------------------------------------------------------
@@ -16,7 +16,7 @@ services:
     container_name: prometheus
     restart: unless-stopped
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -34,7 +34,7 @@ services:
     container_name: loki
     restart: unless-stopped
     volumes:
-      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki_data:/loki
     command: -config.file=/etc/loki/loki-config.yml
     ports:
@@ -55,7 +55,7 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     secrets: [grafana_admin_password]
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
     ports:
       - "3001:3000"

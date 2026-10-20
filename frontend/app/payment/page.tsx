@@ -2,19 +2,8 @@
 
 import { useEffect, useState, SyntheticEvent } from "react";
 import { submitTransfer, extractErrorMessage } from "@/lib/payments";
-import { getAccessToken, login, logout } from "@/lib/auth";
-
-function LogoutButton() {
-  return (
-    <button
-      type="button"
-      onClick={() => logout()}
-      className="fixed right-4 top-4 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-100"
-    >
-      Se déconnecter
-    </button>
-  );
-}
+import { getAccessToken, login } from "@/lib/auth";
+import { Navbar } from "@/components/public/layout/Navbar";
 import {
   maskIban,
   formatEuros,
@@ -27,6 +16,12 @@ type SubmissionState =
   | { status: "submitting" }
   | { status: "success"; maskedIban: string; amount: string }
   | { status: "error"; message: string };
+
+const INPUT_CLASSES =
+  "mt-1 w-full rounded-2xl border border-[var(--ra-border-primary)] px-4 py-3 font-input text-base text-[var(--ra-foreground)] outline-none focus:border-[var(--ra-brand)]";
+
+const PRIMARY_BUTTON_CLASSES =
+  "mt-6 w-full rounded-2xl bg-[var(--ra-brand)] py-4 text-base font-semibold text-white transition hover:bg-[var(--ra-brand-hover)] disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function PaymentPage() {
   const [accountHolderName, setAccountHolderName] = useState("");
@@ -63,21 +58,24 @@ export default function PaymentPage() {
 
   if (!authenticated) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center p-6">
-        <div className="w-full max-w-md rounded-2xl border border-gray-200 p-8 text-center">
-          <h1 className="text-2xl font-bold">Accès refusé</h1>
-          <p className="mt-4 text-gray-600">
-            Vous devez être connecté pour effectuer un virement.
-          </p>
-          <button
-            type="button"
-            onClick={() => login()}
-            className="mt-6 w-full rounded-lg bg-blue-600 py-4 text-base font-semibold text-white transition hover:bg-blue-700"
-          >
-            Se connecter
-          </button>
-        </div>
-      </main>
+      <>
+        <Navbar />
+        <main className="flex min-h-screen flex-col items-center justify-center p-6">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--ra-border-primary)] p-8 text-center">
+            <h1 className="text-2xl font-bold">Accès refusé</h1>
+            <p className="mt-4 text-[var(--ra-input-text)]">
+              Vous devez être connecté pour effectuer un virement.
+            </p>
+            <button
+              type="button"
+              onClick={() => login()}
+              className={PRIMARY_BUTTON_CLASSES}
+            >
+              Se connecter
+            </button>
+          </div>
+        </main>
+      </>
     );
   }
 
@@ -132,110 +130,112 @@ export default function PaymentPage() {
 
   if (submission.status === "success") {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center p-6">
-        <LogoutButton />
-        <div className="w-full max-w-md rounded-2xl border border-gray-200 p-8 text-center">
-          <h1 className="text-2xl font-bold">Virement initié</h1>
-          <p className="mt-4 text-gray-600">
-            Virement de {formatEuros(submission.amount)} vers{" "}
-            {submission.maskedIban} enregistré avec succès.
-          </p>
-          <p className="mt-2 text-sm text-gray-400">
-            Retour au formulaire dans 5 secondes...
-          </p>
-        </div>
-      </main>
+      <>
+        <Navbar />
+        <main className="flex min-h-screen flex-col items-center justify-center p-6">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--ra-border-primary)] p-8 text-center">
+            <h1 className="text-2xl font-bold">Virement initié</h1>
+            <p className="mt-4 text-[var(--ra-input-text)]">
+              Virement de {formatEuros(submission.amount)} vers{" "}
+              {submission.maskedIban} enregistré avec succès.
+            </p>
+            <p className="mt-2 text-sm text-[var(--ra-input-text)]">
+              Retour au formulaire dans 5 secondes...
+            </p>
+          </div>
+        </main>
+      </>
     );
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-6">
-      <LogoutButton />
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-md rounded-2xl border border-gray-200 p-8"
-      >
-        <h1 className="text-2xl font-bold">Virement bancaire</h1>
-
-        <div className="mt-6">
-          <label
-            htmlFor="accountHolderName"
-            className="block text-sm text-gray-500"
-          >
-            Titulaire du compte
-          </label>
-          <input
-            id="accountHolderName"
-            type="text"
-            required
-            autoComplete="off"
-            value={accountHolderName}
-            onChange={(e) => setAccountHolderName(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-3 text-base outline-none focus:border-blue-500"
-            placeholder="Jean Dupont"
-          />
-        </div>
-
-        <div className="mt-4">
-          <label htmlFor="iban" className="block text-sm text-gray-500">
-            IBAN
-          </label>
-          <input
-            id="iban"
-            type="text"
-            required
-            autoComplete="off"
-            value={iban}
-            onChange={(e) => setIban(formatIbanInput(e.target.value))}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-3 text-base outline-none focus:border-blue-500"
-            placeholder="FR76 3000 6000 0112 3456 7890 189"
-          />
-        </div>
-
-        <div className="mt-4">
-          <label htmlFor="bic" className="block text-sm text-gray-500">
-            BIC (optionnel)
-          </label>
-          <input
-            id="bic"
-            type="text"
-            autoComplete="off"
-            value={bic}
-            onChange={(e) => setBic(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-3 text-base outline-none focus:border-blue-500"
-            placeholder="AGRIFRPP"
-          />
-        </div>
-
-        <div className="mt-4">
-          <label htmlFor="amount" className="block text-sm text-gray-500">
-            Montant (€)
-          </label>
-          <input
-            id="amount"
-            type="number"
-            step="0.01"
-            min="0.01"
-            required
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-3 text-base outline-none focus:border-blue-500"
-            placeholder="135.00"
-          />
-        </div>
-
-        {submission.status === "error" && (
-          <p className="mt-4 text-sm text-red-600">{submission.message}</p>
-        )}
-
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="mt-6 w-full rounded-lg bg-blue-600 py-4 text-base font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+    <>
+      <Navbar />
+      <main className="flex min-h-screen flex-col items-center justify-center p-6">
+        <form
+          onSubmit={handleSubmit}
+          className="w-full max-w-md rounded-2xl border border-[var(--ra-border-primary)] p-8"
         >
-          {isSubmitting ? "Envoi en cours..." : "Effectuer le virement"}
-        </button>
-      </form>
-    </main>
+          <h1 className="text-2xl font-bold">Virement bancaire</h1>
+
+          <div className="mt-6">
+            <label
+              htmlFor="accountHolderName"
+              className="block text-sm text-[var(--ra-input-text)]"
+            >
+              Titulaire du compte
+            </label>
+            <input
+              id="accountHolderName"
+              type="text"
+              required
+              autoComplete="off"
+              value={accountHolderName}
+              onChange={(e) => setAccountHolderName(e.target.value)}
+              className={INPUT_CLASSES}
+              placeholder="Jean Dupont"
+            />
+          </div>
+
+          <div className="mt-4">
+            <label htmlFor="iban" className="block text-sm text-[var(--ra-input-text)]">
+              IBAN
+            </label>
+            <input
+              id="iban"
+              type="text"
+              required
+              autoComplete="off"
+              value={iban}
+              onChange={(e) => setIban(formatIbanInput(e.target.value))}
+              className={INPUT_CLASSES}
+              placeholder="FR76 3000 6000 0112 3456 7890 189"
+            />
+          </div>
+
+          <div className="mt-4">
+            <label htmlFor="bic" className="block text-sm text-[var(--ra-input-text)]">
+              BIC (optionnel)
+            </label>
+            <input
+              id="bic"
+              type="text"
+              autoComplete="off"
+              value={bic}
+              onChange={(e) => setBic(e.target.value)}
+              className={INPUT_CLASSES}
+              placeholder="AGRIFRPP"
+            />
+          </div>
+
+          <div className="mt-4">
+            <label htmlFor="amount" className="block text-sm text-[var(--ra-input-text)]">
+              Montant (€)
+            </label>
+            <input
+              id="amount"
+              type="number"
+              step="0.01"
+              min="0.01"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className={INPUT_CLASSES}
+              placeholder="135.00"
+            />
+          </div>
+
+          {submission.status === "error" && (
+            <p className="mt-4 text-sm text-[var(--ra-status-alert-text)]">
+              {submission.message}
+            </p>
+          )}
+
+          <button type="submit" disabled={isSubmitting} className={PRIMARY_BUTTON_CLASSES}>
+            {isSubmitting ? "Envoi en cours..." : "Effectuer le virement"}
+          </button>
+        </form>
+      </main>
+    </>
   );
 }

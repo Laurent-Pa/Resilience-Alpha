@@ -86,6 +86,16 @@ class Payment(BaseModel):
     created_at: datetime
 
 
+class PaymentPage(BaseModel):
+    """Page de résultats pour la vue admin (/admin/payments) : tous les virements,
+    tous émetteurs/destinataires confondus, avec pagination."""
+
+    items: list[Payment]
+    total: int
+    page: int
+    page_size: int
+
+
 class Account(BaseModel):
     id: UUID
     iban_masked: str = Field(examples=["FR****8995"])

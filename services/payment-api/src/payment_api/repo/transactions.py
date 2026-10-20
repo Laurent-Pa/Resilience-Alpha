@@ -1,7 +1,7 @@
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payment_api.domain import iban
@@ -63,3 +63,16 @@ async def history(s: AsyncSession, user: UUID, account_ids: list[UUID], limit: i
         .limit(limit)
     )
     return list(await s.scalars(stmt))
+
+
+async def list_all(s: AsyncSession, limit: int, offset: int) -> list[Transaction]:
+    """Vue admin : tous les virements, tous émetteurs/destinataires confondus.
+    `Payment.dst_iban_masked` (seule forme d'IBAN exposée) reste masquée comme
+    pour les autres vues ; aucun IBAN en clair n'est jamais stocké ni renvoyé."""
+    stmt = select(Transaction).order_by(Transaction.created_at.desc()).limit(limit).offset(offset)
+    return list(await s.scalars(stmt))
+
+
+async def count_all(s: AsyncSession) -> int:
+    total = await s.scalar(select(func.count()).select_from(Transaction))
+    return int(total or 0)
