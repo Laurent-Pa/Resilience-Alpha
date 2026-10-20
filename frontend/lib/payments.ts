@@ -15,6 +15,7 @@ import {
   encryptTransferPayload,
   type TransferPayload,
 } from "./crypto";
+import { getAccessToken, login } from "./auth";
 
 // Confirmé via contracts/openapi-payment.json : le service expose bien
 // ses routes sous /api/payments, le WAF route sans réécriture de chemin.
@@ -125,6 +126,12 @@ async function attemptTransfer(
   idempotencyKey: string,
   allowRetry: boolean
 ): Promise<TransferResult> {
+  const token = await getAccessToken();
+  if (!token) {
+    await login();
+    throw new Error("Session expirée, redirection vers la connexion.");
+  }
+
   const publicKey = await getPublicKey();
   const encrypted = await encryptTransferPayload(payload, publicKey);
 
@@ -133,6 +140,7 @@ async function attemptTransfer(
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": idempotencyKey,
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
       ...encrypted,
