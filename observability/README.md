@@ -20,11 +20,14 @@ observability/
 
 ## Secrets locaux (temporaire)
 
-En attendant que Vault soit opérationnel et gère ce secret pour tout le monde, chaque personne qui lance la stack génère son propre mot de passe admin Grafana (fichier gitignoré, jamais commité ni partagé) :
+En attendant que Vault soit opérationnel et gère ce secret pour tout le monde, le mot de passe admin Grafana est lu dans `.secrets/grafana_admin_password` **à la racine du dépôt** (fichier gitignoré, jamais commité). Mot de passe de dev par défaut, depuis la racine :
 
 ```bash
-openssl rand -hex 16 > .secrets/grafana_admin_password
+printf '%s' 'TestPassword123' > .secrets/grafana_admin_password
 ```
+
+Grafana n'applique ce mot de passe qu'à la création du volume `grafana_data`. Pour le changer ensuite :
+`docker exec grafana grafana cli admin reset-admin-password <mdp>`.
 
 ## Démarrer
 

@@ -67,6 +67,8 @@ services:
       # En dev, l'hôte "public" est localhost:8080 (pas de WAF). Le JWKS reste interne (§6).
       OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      # localhost et 127.0.0.1 sont deux origines distinctes pour le navigateur (Docker Desktop ouvre 127.0.0.1).
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
     secrets: [db_password, iban_hmac_key, rsa_private_key]
     ports: ["127.0.0.1:8001:8000"]
     depends_on:

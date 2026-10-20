@@ -1,9 +1,11 @@
+name: resilience-alpha
+
   # ---------------------------------------------------------------
   # SECRETS — temporaire, le temps d'implémenter le Vault
   # ---------------------------------------------------------------
 secrets:
   grafana_admin_password:
-    file: ./.secrets/grafana_admin_password
+    file: ../.secrets/grafana_admin_password
 
 services:
   # ---------------------------------------------------------------
@@ -14,7 +16,7 @@ services:
     container_name: prometheus
     restart: unless-stopped
     volumes:
-      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -32,7 +34,7 @@ services:
     container_name: loki
     restart: unless-stopped
     volumes:
-      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki_data:/loki
     command: -config.file=/etc/loki/loki-config.yml
     ports:
@@ -53,7 +55,7 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     secrets: [grafana_admin_password]
     volumes:
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
     ports:
       - "3001:3000"
@@ -75,5 +77,6 @@ volumes:
 # pour que Prometheus puisse les scraper par leur nom.
 # -----------------------------------------------------------------
 networks:
+  # Doit rester identique à compose.dev.yaml (même projet) : sinon Compose veut recréer le réseau partagé.
   monitoring:
-    driver: bridge
+    external: false

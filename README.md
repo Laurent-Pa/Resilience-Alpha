@@ -82,6 +82,39 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_p
 openssl rand -hex 16 | tr -d '\n' > .secrets/grafana_admin_password
 ```
 
+**Variante PowerShell** (Windows), à lancer depuis la racine du dépôt. Elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
+
+```powershell
+New-Item -ItemType Directory -Force .secrets | Out-Null
+function New-Secret([int]$n, [switch]$Base64) {
+  $b = New-Object byte[] $n
+  [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+  if ($Base64) { [Convert]::ToBase64String($b) } else { -join ($b | ForEach-Object { $_.ToString('x2') }) }
+}
+Set-Content .secrets/db_password               (New-Secret 24)          -NoNewline -Encoding ascii
+Set-Content .secrets/iban_hmac_key             (New-Secret 32)          -NoNewline -Encoding ascii
+Set-Content .secrets/prober_client_secret      (New-Secret 32)          -NoNewline -Encoding ascii
+Set-Content .secrets/remediation_client_secret (New-Secret 32)          -NoNewline -Encoding ascii
+Set-Content .secrets/test_users_password       (New-Secret 12 -Base64)  -NoNewline -Encoding ascii
+
+# keycloak.env : admin de bootstrap + valeurs des placeholders ${...} du realm
+@(
+  "KC_BOOTSTRAP_ADMIN_USERNAME=admin"
+  "KC_BOOTSTRAP_ADMIN_PASSWORD=ChangeMoi123!"
+  "PROBER_CLIENT_SECRET=$((Get-Content .secrets/prober_client_secret).Trim())"
+  "REMEDIATION_CLIENT_SECRET=$((Get-Content .secrets/remediation_client_secret).Trim())"
+  "TEST_USERS_PASSWORD=$((Get-Content .secrets/test_users_password).Trim())"
+) | Set-Content .secrets/keycloak.env -Encoding ascii
+
+Get-ChildItem .secrets
+```
+
+La clé RSA se génère avec `openssl`, depuis Git Bash :
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
+```
+
 - `iban_hmac_key` est **obligatoire** : sans lui, le démarrage est refusé.
 - `rsa_private_key` est recommandé pour la démo/le dev continu : sans lui, une clé RSA éphémère est générée à chaque redémarrage, ce qui invalide la clé publique mise en cache côté frontend (le frontend et le prober s'en remettent via un retry sur `decryption_failed`, mais c'est à éviter en usage courant).
 - **Ne jamais régénérer `iban_hmac_key` sur une base existante** : les comptes deviennent introuvables par IBAN.
@@ -181,6 +214,47 @@ Avec le backend et le frontend lancés :
    make check-openapi
    ```
    Échoue si `contracts/openapi-payment.json` diverge de ce que `payment-api` exporte réellement.
+
+## Commandes utiles
+
+### Prober
+
+```powershell
+# Les 60 derniers résultats de sonde (ok, stage, latency_ms)
+Invoke-RestMethod http://localhost:8002/status
+
+# Temps de détection : la sonde passe à 0 en moins de 10 s, puis repasse à 1 au redémarrage
+docker compose -f compose.dev.yaml stop payment-api
+docker compose -f compose.dev.yaml start payment-api
+```
+
+### Base de données
+
+```bash
+# Comptes seedés (alice, bob, carol, PROBE, PROBE_SINK, bank_reserve)
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT owner_id, label, iban_masked, bic FROM payments.accounts ORDER BY label;"
+
+# Soldes calculés (somme du ledger)
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT a.label, COALESCE(SUM(e.amount_cents),0) AS balance_cents FROM payments.accounts a LEFT JOIN payments.ledger_entries e ON e.account_id = a.id GROUP BY a.label ORDER BY a.label;"
+
+# Derniers virements (ceux du prober s'accumulent : PROBE → PROBE_SINK)
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT created_at, amount_cents, status, dst_iban_masked FROM payments.transactions ORDER BY created_at DESC LIMIT 10;"
+
+# Session interactive (\dt payments.*, \d payments.accounts, etc.)
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience
+```
+
+### Observabilité (Prometheus, Loki, Grafana)
+
+```bash
+# Depuis la racine du dépôt
+docker compose -f observability/docker-compose.observability.yml up -d
+
+# Changer le mot de passe admin Grafana (il n'est lu dans le secret qu'à la création du volume)
+docker exec grafana grafana cli admin reset-admin-password TestPassword123
+```
+
+Voir [observability/README.md](observability/README.md) pour les détails.
 
 ## Pièges connus
 
