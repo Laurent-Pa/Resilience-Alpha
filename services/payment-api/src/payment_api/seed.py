@@ -8,6 +8,7 @@ Pour les connaître en démo : `python -m payment_api.seed`.
 """
 
 from dataclasses import dataclass
+from decimal import Decimal
 from uuid import UUID, uuid5
 
 import structlog
@@ -41,7 +42,7 @@ class SeedAccount:
     owner: UUID
     label: str
     number: int  # n° de compte à 11 chiffres, base de l'IBAN
-    opening_cents: int
+    opening: Decimal  # euros
 
     @property
     def iban(self) -> str:
@@ -49,14 +50,14 @@ class SeedAccount:
 
 
 SEED_ACCOUNTS: list[SeedAccount] = [
-    SeedAccount("alice", USERS["alice"], "Compte courant", 10_000_000_011, 150_000),
-    SeedAccount("bob", USERS["bob"], "Compte courant", 10_000_000_021, 80_000),
-    SeedAccount("carol", USERS["carol"], "Compte courant", 10_000_000_031, 250_000),
+    SeedAccount("alice", USERS["alice"], "Compte courant", 10_000_000_011, Decimal("1500")),
+    SeedAccount("bob", USERS["bob"], "Compte courant", 10_000_000_021, Decimal("800")),
+    SeedAccount("carol", USERS["carol"], "Compte courant", 10_000_000_031, Decimal("2500")),
     # Le prober paie 1 centime toutes les 5 s vers PROBE_SINK : ~57 jours d'autonomie.
-    SeedAccount("prober", USERS["prober"], "PROBE", 90_000_000_001, 1_000_000),
-    SeedAccount("probe_sink", PROBE_SINK_OWNER, "PROBE_SINK", 90_000_000_002, 0),
+    SeedAccount("prober", USERS["prober"], "PROBE", 90_000_000_001, Decimal("10000")),
+    SeedAccount("probe_sink", PROBE_SINK_OWNER, "PROBE_SINK", 90_000_000_002, Decimal(0)),
 ]
-BANK_RESERVE = SeedAccount("bank", BANK_OWNER, BANK_RESERVE_LABEL, 1, 0)
+BANK_RESERVE = SeedAccount("bank", BANK_OWNER, BANK_RESERVE_LABEL, 1, Decimal(0))
 
 log = structlog.get_logger()
 
@@ -93,7 +94,7 @@ async def seed(s: AsyncSession, pseudo: Pseudonymizer) -> None:
 
         opened = 0
         for a in SEED_ACCOUNTS:
-            if a.opening_cents == 0:
+            if a.opening == 0:
                 continue
             dst = account_id(a.owner)
             tx_id = await s.scalar(
@@ -104,7 +105,7 @@ async def seed(s: AsyncSession, pseudo: Pseudonymizer) -> None:
                     src_account=BANK_RESERVE_ID,
                     dst_account=dst,
                     dst_iban_masked=iban.mask(a.iban),
-                    amount_cents=a.opening_cents,
+                    amount=a.opening,
                     status=STATUS_COMPLETED,
                     request_hash="seed",
                 )
@@ -114,10 +115,8 @@ async def seed(s: AsyncSession, pseudo: Pseudonymizer) -> None:
             if tx_id is not None:
                 s.add_all(
                     [
-                        LedgerEntry(
-                            tx_id=tx_id, account_id=BANK_RESERVE_ID, amount_cents=-a.opening_cents
-                        ),
-                        LedgerEntry(tx_id=tx_id, account_id=dst, amount_cents=a.opening_cents),
+                        LedgerEntry(tx_id=tx_id, account_id=BANK_RESERVE_ID, amount=-a.opening),
+                        LedgerEntry(tx_id=tx_id, account_id=dst, amount=a.opening),
                     ]
                 )
                 opened += 1
@@ -127,4 +126,4 @@ async def seed(s: AsyncSession, pseudo: Pseudonymizer) -> None:
 if __name__ == "__main__":
     for a in SEED_ACCOUNTS:
         shown = iban.format_groups(a.iban)
-        print(f"{a.name:10} {a.label:15} {shown}  {a.opening_cents / 100:>9.2f} €")
+        print(f"{a.name:10} {a.label:15} {shown}  {a.opening:>9.2f} €")

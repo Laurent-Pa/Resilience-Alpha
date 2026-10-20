@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from payment_api.domain import bic, iban
 from payment_api.domain.rules import InvalidPayload
 
-MAX_AMOUNT_CENTS = 100_000_000  # 1 000 000 €
+MAX_AMOUNT = Decimal("1000000")  # €
 
 
 class TransferEnvelope(BaseModel):
@@ -17,7 +18,12 @@ class TransferEnvelope(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    amount_cents: int = Field(gt=0, le=MAX_AMOUNT_CENTS, description="Montant en centimes")
+    amount: Decimal = Field(
+        gt=0,
+        le=MAX_AMOUNT,
+        decimal_places=2,
+        description='Montant en euros, 2 décimales max (ex. "50.05")',
+    )
     encrypted_key: str = Field(
         max_length=1024, description="Clé AES-256 chiffrée en RSA-OAEP SHA-256, base64"
     )
@@ -75,7 +81,7 @@ class Payment(BaseModel):
     src_account: UUID
     dst_account: UUID
     dst_iban_masked: str = Field(examples=["FR****8995"])
-    amount_cents: int
+    amount: Decimal = Field(examples=["50.05"])
     status: Literal["COMPLETED", "REJECTED"]
     created_at: datetime
 
@@ -96,7 +102,7 @@ class Account(BaseModel):
     bic: str
     label: str
     currency: str
-    balance_cents: int
+    balance: Decimal = Field(examples=["1500.00"])
 
 
 class LedgerCheck(BaseModel):

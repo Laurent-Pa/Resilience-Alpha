@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 UNBALANCED_TX = text("""
     SELECT tx_id FROM payments.ledger_entries
-    GROUP BY tx_id HAVING SUM(amount_cents) <> 0
+    GROUP BY tx_id HAVING SUM(amount) <> 0
 """)
 
 INCOMPLETE_TX = text("""
@@ -21,7 +21,7 @@ NEGATIVE_ACCOUNTS = text("""
     SELECT e.account_id FROM payments.ledger_entries e
     JOIN payments.accounts a ON a.id = e.account_id
     WHERE a.label <> 'bank_reserve'
-    GROUP BY e.account_id HAVING SUM(e.amount_cents) < 0
+    GROUP BY e.account_id HAVING SUM(e.amount) < 0
 """)
 
 

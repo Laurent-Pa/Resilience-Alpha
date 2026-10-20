@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import uuid
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select, text
@@ -18,7 +19,7 @@ from payment_api.seed import (
 )
 from resilience_common.crypto import seal
 
-OPENING_TXS = sum(1 for a in SEED_ACCOUNTS if a.opening_cents > 0)
+OPENING_TXS = sum(1 for a in SEED_ACCOUNTS if a.opening > 0)
 
 TRANSFER = "/api/payments/transfer"
 
@@ -35,10 +36,10 @@ def key() -> dict[str, str]:
     return {"Idempotency-Key": str(uuid.uuid4())}
 
 
-async def balance(client, auth, user: str) -> int:
+async def balance(client, auth, user: str) -> Decimal:
     r = await client.get("/api/accounts/me", headers=auth(user))
     assert r.status_code == 200
-    return r.json()["balance_cents"]
+    return Decimal(r.json()["balance"])
 
 
 async def ledger_check(client, auth) -> dict:
@@ -65,7 +66,7 @@ async def test_public_key_is_served_without_auth(client):
 
 
 async def test_tampered_ciphertext_is_400_and_writes_nothing(client, auth, envelope, db):
-    payload = envelope(iban_of("bob"), 100)
+    payload = envelope(iban_of("bob"), "1.00")
     raw = bytearray(base64.b64decode(payload["ciphertext"]))
     raw[0] ^= 0x01
     payload["ciphertext"] = base64.b64encode(raw).decode()
@@ -86,7 +87,7 @@ async def test_tampered_ciphertext_is_400_and_writes_nothing(client, auth, envel
     ],
 )
 async def test_undecryptable_envelope_is_400(client, auth, envelope, field, value):
-    payload = envelope(iban_of("bob"), 100) | {field: value}
+    payload = envelope(iban_of("bob"), "1.00") | {field: value}
     r = await client.post(TRANSFER, json=payload, headers=auth("alice") | key())
     assert r.status_code == 400
     assert code(r) == "decryption_failed"
@@ -94,7 +95,7 @@ async def test_undecryptable_envelope_is_400(client, auth, envelope, field, valu
 
 async def test_incomplete_beneficiary_is_422_without_echo(client, auth, app):
     payload = {
-        "amount_cents": 100,
+        "amount": "1.00",
         **seal(app.state.transfer_cipher.public_pem, {"iban": iban_of("bob")}),  # nom absent
     }
     r = await client.post(TRANSFER, json=payload, headers=auth("alice") | key())
@@ -107,8 +108,8 @@ async def test_incomplete_beneficiary_is_422_without_echo(client, auth, app):
 
 
 async def test_accounts_me_returns_the_single_account(client, auth):
-    assert await balance(client, auth, "alice") == 150_000
-    assert await balance(client, auth, "prober") == 1_000_000
+    assert await balance(client, auth, "alice") == Decimal("1500")
+    assert await balance(client, auth, "prober") == Decimal("10000")
     bob = (await client.get("/api/accounts/me", headers=auth("bob"))).json()
     assert bob["id"] == str(acct("bob"))
     assert bob["iban_masked"] == iban.mask(iban_of("bob"))
@@ -120,18 +121,18 @@ async def test_accounts_me_returns_the_single_account(client, auth):
 async def test_nominal_transfer(client, auth, envelope):
     r = await client.post(
         TRANSFER,
-        json=envelope(iban_of("bob"), 12_345),
+        json=envelope(iban_of("bob"), "123.45"),
         headers=auth("alice") | key(),
     )
     assert r.status_code == 201
     tx = r.json()
     assert tx["status"] == "COMPLETED"
-    assert tx["amount_cents"] == 12_345
+    assert tx["amount"] == "123.45"
     assert tx["dst_account"] == str(acct("bob"))
     assert tx["dst_iban_masked"] == iban.mask(iban_of("bob"))
 
-    assert await balance(client, auth, "alice") == 150_000 - 12_345
-    assert await balance(client, auth, "bob") == 80_000 + 12_345
+    assert await balance(client, auth, "alice") == Decimal("1500") - Decimal("123.45")
+    assert await balance(client, auth, "bob") == Decimal("800") + Decimal("123.45")
 
     # Visible par l'émetteur et le destinataire, invisible pour un tiers.
     assert (await client.get(f"/api/payments/{tx['id']}", headers=auth("alice"))).status_code == 200
@@ -148,7 +149,7 @@ async def test_nominal_transfer(client, auth, envelope):
 
 async def test_iban_with_spaces_and_lowercase_is_accepted(client, auth, envelope):
     typed = iban.format_groups(iban_of("bob")).lower()
-    r = await client.post(TRANSFER, json=envelope(typed, 100), headers=auth("alice") | key())
+    r = await client.post(TRANSFER, json=envelope(typed, "1.00"), headers=auth("alice") | key())
     assert r.status_code == 201
     assert r.json()["dst_account"] == str(acct("bob"))
 
@@ -156,7 +157,7 @@ async def test_iban_with_spaces_and_lowercase_is_accepted(client, auth, envelope
 async def test_prober_transfer_between_probe_accounts(client, auth, envelope):
     r = await client.post(
         TRANSFER,
-        json=envelope(iban_of("probe_sink"), 1),
+        json=envelope(iban_of("probe_sink"), "0.01"),
         headers=auth("prober") | key(),
     )
     assert r.status_code == 201
@@ -174,7 +175,7 @@ async def test_unknown_payment_is_404(client, auth):
 async def test_matching_or_absent_bic_is_accepted(client, auth, envelope, given):
     r = await client.post(
         TRANSFER,
-        json=envelope(iban_of("bob"), 100, bic=given),
+        json=envelope(iban_of("bob"), "1.00", bic=given),
         headers=auth("alice") | key(),
     )
     assert r.status_code == 201
@@ -186,7 +187,7 @@ async def test_matching_or_absent_bic_is_accepted(client, auth, envelope, given)
 async def test_wrong_bic_is_422(client, auth, envelope, given, expected):
     r = await client.post(
         TRANSFER,
-        json=envelope(iban_of("bob"), 100, bic=given),
+        json=envelope(iban_of("bob"), "1.00", bic=given),
         headers=auth("alice") | key(),
     )
     assert r.status_code == 422
@@ -199,23 +200,23 @@ async def test_wrong_bic_is_422(client, auth, envelope, given, expected):
 async def test_invalid_iban_is_422(client, auth, envelope):
     good = iban_of("bob")
     bad = good[:-1] + str((int(good[-1]) + 1) % 10)  # clé fausse
-    r = await client.post(TRANSFER, json=envelope(bad, 100), headers=auth("alice") | key())
+    r = await client.post(TRANSFER, json=envelope(bad, "1.00"), headers=auth("alice") | key())
     assert r.status_code == 422
     assert code(r) == "invalid_iban"
 
 
 async def test_insufficient_funds_is_422(client, auth, envelope):
     r = await client.post(
-        TRANSFER, json=envelope(iban_of("alice"), 80_001), headers=auth("bob") | key()
+        TRANSFER, json=envelope(iban_of("alice"), "800.01"), headers=auth("bob") | key()
     )
     assert r.status_code == 422
     assert code(r) == "insufficient_funds"
-    assert await balance(client, auth, "bob") == 80_000
+    assert await balance(client, auth, "bob") == Decimal("800")
 
 
 async def test_client_without_account_is_403_and_404(client, auth, envelope):
     stranger = auth(uuid.uuid4())  # rôle client valide, aucun compte
-    r = await client.post(TRANSFER, json=envelope(iban_of("bob"), 1), headers=stranger | key())
+    r = await client.post(TRANSFER, json=envelope(iban_of("bob"), "0.01"), headers=stranger | key())
     assert r.status_code == 403
     assert code(r) == "no_account"
     assert (await client.get("/api/accounts/me", headers=stranger)).status_code == 404
@@ -223,36 +224,36 @@ async def test_client_without_account_is_403_and_404(client, auth, envelope):
 
 async def test_debited_account_comes_from_token(client, auth, envelope):
     r = await client.post(
-        TRANSFER, json=envelope(iban_of("carol"), 100), headers=auth("bob") | key()
+        TRANSFER, json=envelope(iban_of("carol"), "1.00"), headers=auth("bob") | key()
     )
     assert r.status_code == 201
     assert r.json()["src_account"] == str(acct("bob"))
-    assert await balance(client, auth, "bob") == 80_000 - 100
+    assert await balance(client, auth, "bob") == Decimal("800") - Decimal("1.00")
 
 
 async def test_src_account_field_is_rejected(client, auth, envelope):
-    payload = envelope(iban_of("bob"), 1) | {"src_account": str(acct("carol"))}
+    payload = envelope(iban_of("bob"), "0.01") | {"src_account": str(acct("carol"))}
     r = await client.post(TRANSFER, json=payload, headers=auth("alice") | key())
     assert r.status_code == 422
 
 
 async def test_unknown_iban_is_422(client, auth, envelope):
     unknown = iban.make_fr(55_555_555_555)
-    r = await client.post(TRANSFER, json=envelope(unknown, 1), headers=auth("alice") | key())
+    r = await client.post(TRANSFER, json=envelope(unknown, "0.01"), headers=auth("alice") | key())
     assert r.status_code == 422
     assert code(r) == "unknown_account"
 
 
 async def test_same_account_is_422(client, auth, envelope):
     r = await client.post(
-        TRANSFER, json=envelope(iban_of("alice"), 1), headers=auth("alice") | key()
+        TRANSFER, json=envelope(iban_of("alice"), "0.01"), headers=auth("alice") | key()
     )
     assert r.status_code == 422
     assert code(r) == "same_account"
 
 
 async def test_validation_errors_are_422(client, auth, envelope):
-    for amount in (0, -5, 100_000_001):
+    for amount in ("0", "-0.05", "1000000.01", "1.001"):
         r = await client.post(
             TRANSFER,
             json=envelope(iban_of("bob"), amount),
@@ -260,12 +261,12 @@ async def test_validation_errors_are_422(client, auth, envelope):
         )
         assert r.status_code == 422, amount
     # Header Idempotency-Key absent.
-    r = await client.post(TRANSFER, json=envelope(iban_of("bob"), 1), headers=auth("alice"))
+    r = await client.post(TRANSFER, json=envelope(iban_of("bob"), "0.01"), headers=auth("alice"))
     assert r.status_code == 422
 
 
 async def test_auth_is_enforced(client, auth, envelope):
-    payload = envelope(iban_of("bob"), 1)
+    payload = envelope(iban_of("bob"), "0.01")
     assert (await client.post(TRANSFER, json=payload, headers=key())).status_code == 401
     r = await client.post(TRANSFER, json=payload, headers=auth("operator") | key())
     assert r.status_code == 403
@@ -276,7 +277,9 @@ async def test_auth_is_enforced(client, auth, envelope):
 
 
 async def test_no_plaintext_iban_in_database(client, auth, envelope, db):
-    await client.post(TRANSFER, json=envelope(iban_of("bob"), 100), headers=auth("alice") | key())
+    await client.post(
+        TRANSFER, json=envelope(iban_of("bob"), "1.00"), headers=auth("alice") | key()
+    )
     async with db() as s:
         dump = " ".join(
             await s.scalars(
@@ -298,12 +301,14 @@ async def test_iban_and_holder_name_never_logged(client, auth, envelope, capsys)
     name = "Zébulon Témoin"
     await client.post(
         TRANSFER,
-        json=envelope(iban_of("bob"), 100, name=name),
+        json=envelope(iban_of("bob"), "1.00", name=name),
         headers=auth("alice") | key(),
     )
     good = iban_of("carol")
     bad = good[:-1] + str((int(good[-1]) + 1) % 10)  # clé fausse : refusé
-    await client.post(TRANSFER, json=envelope(bad, 100, name=name), headers=auth("alice") | key())
+    await client.post(
+        TRANSFER, json=envelope(bad, "1.00", name=name), headers=auth("alice") | key()
+    )
     logs = capsys.readouterr().out
     assert "payment.created" in logs and "payment.rejected" in logs
     for secret in (iban_of("bob"), bad, name):
@@ -315,9 +320,9 @@ async def test_iban_and_holder_name_never_logged(client, auth, envelope, capsys)
 
 async def test_replay_returns_200_and_writes_once(client, auth, envelope, db):
     headers = auth("alice") | key()
-    first = await client.post(TRANSFER, json=envelope(iban_of("bob"), 500), headers=headers)
+    first = await client.post(TRANSFER, json=envelope(iban_of("bob"), "5.00"), headers=headers)
     # Le front rechiffre à chaque envoi (nouvelle clé AES) : c'est toujours un rejeu.
-    replay = await client.post(TRANSFER, json=envelope(iban_of("bob"), 500), headers=headers)
+    replay = await client.post(TRANSFER, json=envelope(iban_of("bob"), "5.00"), headers=headers)
 
     assert first.status_code == 201
     assert replay.status_code == 200
@@ -328,13 +333,13 @@ async def test_replay_returns_200_and_writes_once(client, auth, envelope, db):
             select(func.count()).where(LedgerEntry.tx_id == uuid.UUID(first.json()["id"]))
         )
     assert n == 2
-    assert await balance(client, auth, "alice") == 150_000 - 500
+    assert await balance(client, auth, "alice") == Decimal("1500") - Decimal("5.00")
 
 
 async def test_same_key_different_body_is_409(client, auth, envelope):
     headers = auth("alice") | key()
-    r1 = await client.post(TRANSFER, json=envelope(iban_of("bob"), 500), headers=headers)
-    r2 = await client.post(TRANSFER, json=envelope(iban_of("carol"), 500), headers=headers)
+    r1 = await client.post(TRANSFER, json=envelope(iban_of("bob"), "5.00"), headers=headers)
+    r2 = await client.post(TRANSFER, json=envelope(iban_of("carol"), "5.00"), headers=headers)
     assert r1.status_code == 201
     assert r2.status_code == 409
     assert code(r2) == "idempotency_conflict"
@@ -342,15 +347,17 @@ async def test_same_key_different_body_is_409(client, auth, envelope):
 
 async def test_same_key_reused_by_another_user_is_409(client, auth, envelope):
     k = key()
-    r1 = await client.post(TRANSFER, json=envelope(iban_of("bob"), 500), headers=auth("alice") | k)
-    r2 = await client.post(TRANSFER, json=envelope(iban_of("bob"), 500), headers=auth("bob") | k)
+    r1 = await client.post(
+        TRANSFER, json=envelope(iban_of("bob"), "5.00"), headers=auth("alice") | k
+    )
+    r2 = await client.post(TRANSFER, json=envelope(iban_of("bob"), "5.00"), headers=auth("bob") | k)
     assert r1.status_code == 201
     assert r2.status_code == 409
 
 
 async def test_concurrent_requests_with_same_key_create_one_transaction(client, auth, envelope, db):
     headers = auth("alice") | key()
-    payload = envelope(iban_of("bob"), 700)
+    payload = envelope(iban_of("bob"), "7.00")
     responses = await asyncio.gather(
         *(client.post(TRANSFER, json=payload, headers=headers) for _ in range(10))
     )
@@ -365,25 +372,25 @@ async def test_concurrent_requests_with_same_key_create_one_transaction(client, 
             .where(Transaction.idempotency_key == headers["Idempotency-Key"])
         )
     assert n == 1
-    assert await balance(client, auth, "alice") == 150_000 - 700
+    assert await balance(client, auth, "alice") == Decimal("1500") - Decimal("7.00")
 
 
 # --- Concurrence et invariant ------------------------------------------------------
 
 
 async def test_50_concurrent_crossed_transfers(client, auth, envelope):
-    a_to_b, b_to_a = 100, 37
+    a_to_b, b_to_a = Decimal("1.00"), Decimal("0.37")
 
     async def send(i: int):
         if i % 2 == 0:
             return await client.post(
                 TRANSFER,
-                json=envelope(iban_of("bob"), a_to_b),
+                json=envelope(iban_of("bob"), str(a_to_b)),
                 headers=auth("alice") | key(),
             )
         return await client.post(
             TRANSFER,
-            json=envelope(iban_of("alice"), b_to_a),
+            json=envelope(iban_of("alice"), str(b_to_a)),
             headers=auth("bob") | key(),
         )
 
@@ -391,21 +398,21 @@ async def test_50_concurrent_crossed_transfers(client, auth, envelope):
     assert [r.status_code for r in responses] == [201] * 50
 
     delta = 25 * a_to_b - 25 * b_to_a
-    assert await balance(client, auth, "alice") == 150_000 - delta
-    assert await balance(client, auth, "bob") == 80_000 + delta
+    assert await balance(client, auth, "alice") == Decimal("1500") - delta
+    assert await balance(client, auth, "bob") == Decimal("800") + delta
     assert (await ledger_check(client, auth))["ok"] is True
 
 
 async def test_ledger_check_detects_unbalanced_entry(client, auth, envelope, db):
     r = await client.post(
-        TRANSFER, json=envelope(iban_of("bob"), 100), headers=auth("alice") | key()
+        TRANSFER, json=envelope(iban_of("bob"), "1.00"), headers=auth("alice") | key()
     )
     tx_id = r.json()["id"]
     async with db() as s, s.begin():
         await s.execute(
             text(
-                "INSERT INTO payments.ledger_entries (tx_id, account_id, amount_cents) "
-                "VALUES (:tx, :acct, -99999999)"
+                "INSERT INTO payments.ledger_entries (tx_id, account_id, amount) "
+                "VALUES (:tx, :acct, -999999.99)"
             ),
             {"tx": tx_id, "acct": acct("carol")},
         )
@@ -421,7 +428,7 @@ async def test_seed_is_idempotent(client, auth, app, db):
     async with db() as s:
         await seed(s, app.state.pseudonymizer)
         await seed(s, app.state.pseudonymizer)
-    assert await balance(client, auth, "alice") == 150_000
+    assert await balance(client, auth, "alice") == Decimal("1500")
     check = await ledger_check(client, auth)
     assert check["ok"] is True
     assert str(BANK_RESERVE_ID) not in check["negative_accounts"]
@@ -436,7 +443,9 @@ async def test_health_and_metrics(client, auth, envelope):
     assert ready.status_code == 200
     assert ready.json()["checks"] == {"db": "ok"}
 
-    await client.post(TRANSFER, json=envelope(iban_of("bob"), 1), headers=auth("alice") | key())
+    await client.post(
+        TRANSFER, json=envelope(iban_of("bob"), "0.01"), headers=auth("alice") | key()
+    )
     metrics = (await client.get("/metrics")).text
     assert 'payments_total{status="completed"}' in metrics
     assert "payment_duration_seconds_bucket" in metrics
