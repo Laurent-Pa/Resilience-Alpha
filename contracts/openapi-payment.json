@@ -330,6 +330,68 @@
           }
         ]
       }
+    },
+    "/api/admin/payments": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List All Payments",
+        "description": "Vue back-office : tous les virements, tous émetteurs/destinataires confondus\n(contrairement à GET /payments, qui ne renvoie que l'historique de l'appelant).\n\nL'IBAN n'est jamais exposé qu'au format masqué (`Payment.dst_iban_masked`,\nex. \"FR****8995\") : c'est la seule forme stockée en base, il n'y a donc rien\nà filtrer ici.",
+        "operationId": "list_all_payments_api_admin_payments_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -518,6 +580,38 @@
           "created_at"
         ],
         "title": "Payment"
+      },
+      "PaymentPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Payment"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "PaymentPage",
+        "description": "Page de résultats pour la vue admin (/admin/payments) : tous les virements,\ntous émetteurs/destinataires confondus, avec pagination."
       },
       "PublicKey": {
         "properties": {
