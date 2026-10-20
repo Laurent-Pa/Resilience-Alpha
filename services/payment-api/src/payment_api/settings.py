@@ -8,7 +8,7 @@ class Settings(ServiceSettings):
     service_name: str = "payment-api"
     oidc_audience: str = "payment-api"
 
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:3000"]  # noqa: RUF012 (pydantic copie le défaut)
 
     db_host: str = "postgres"
     db_port: int = 5432
