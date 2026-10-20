@@ -1,11 +1,23 @@
 "use client";
 
-import { useState, SyntheticEvent } from "react";
+import { useEffect, useState, SyntheticEvent } from "react";
 import { submitTransfer, extractErrorMessage } from "@/lib/payments";
+import { getAccessToken, login, logout } from "@/lib/auth";
+
+function LogoutButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => logout()}
+      className="fixed right-4 top-4 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-100"
+    >
+      Se déconnecter
+    </button>
+  );
+}
 import {
   maskIban,
-  eurosToCents,
-  formatCentsAsEuros,
+  formatEuros,
   formatIbanInput,
 } from "@/lib/format";
 import type { TransferPayload } from "@/lib/crypto";
@@ -13,7 +25,7 @@ import type { TransferPayload } from "@/lib/crypto";
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
-  | { status: "success"; maskedIban: string; amountCents: number }
+  | { status: "success"; maskedIban: string; amount: string }
   | { status: "error"; message: string };
 
 export default function PaymentPage() {
@@ -25,7 +37,49 @@ export default function PaymentPage() {
     status: "idle",
   });
 
+  // null tant que la session n'a pas été vérifiée
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getAccessToken().then((token) => setAuthenticated(token !== null));
+  }, []);
+
+  // Après un virement réussi, retour au formulaire vierge au bout de 5 s.
+  useEffect(() => {
+    if (submission.status !== "success") return;
+    const timer = setTimeout(() => {
+      setAccountHolderName("");
+      setIban("");
+      setBic("");
+      setAmount("");
+      setSubmission({ status: "idle" });
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [submission.status]);
+
   const isSubmitting = submission.status === "submitting";
+
+  if (authenticated === null) return null;
+
+  if (!authenticated) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-2xl border border-gray-200 p-8 text-center">
+          <h1 className="text-2xl font-bold">Accès refusé</h1>
+          <p className="mt-4 text-gray-600">
+            Vous devez être connecté pour effectuer un virement.
+          </p>
+          <button
+            type="button"
+            onClick={() => login()}
+            className="mt-6 w-full rounded-lg bg-blue-600 py-4 text-base font-semibold text-white transition hover:bg-blue-700"
+          >
+            Se connecter
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,8 +93,6 @@ export default function PaymentPage() {
       return;
     }
 
-    const amountCents = eurosToCents(amountInEuros);
-
     const payload: TransferPayload = {
       iban: iban.replace(/\s+/g, "").toUpperCase(),
       account_holder_name: accountHolderName,
@@ -50,13 +102,13 @@ export default function PaymentPage() {
     setSubmission({ status: "submitting" });
 
     try {
-      const result = await submitTransfer(payload, amountCents);
+      const result = await submitTransfer(payload, amount);
 
       if (result.ok) {
         setSubmission({
           status: "success",
           maskedIban: maskIban(payload.iban),
-          amountCents,
+          amount,
         });
       } else {
         const backendMessage = extractErrorMessage(result.body);
@@ -81,11 +133,15 @@ export default function PaymentPage() {
   if (submission.status === "success") {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-6">
+        <LogoutButton />
         <div className="w-full max-w-md rounded-2xl border border-gray-200 p-8 text-center">
           <h1 className="text-2xl font-bold">Virement initié</h1>
           <p className="mt-4 text-gray-600">
-            Virement de {formatCentsAsEuros(submission.amountCents)} vers{" "}
+            Virement de {formatEuros(submission.amount)} vers{" "}
             {submission.maskedIban} enregistré avec succès.
+          </p>
+          <p className="mt-2 text-sm text-gray-400">
+            Retour au formulaire dans 5 secondes...
           </p>
         </div>
       </main>
@@ -94,6 +150,7 @@ export default function PaymentPage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-6">
+      <LogoutButton />
       <form
         onSubmit={handleSubmit}
         className="w-full max-w-md rounded-2xl border border-gray-200 p-8"

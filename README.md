@@ -48,7 +48,7 @@ resilience-alpha/
 │   │   ├── crypto.ts                # chiffrement hybride RSA-OAEP + AES-GCM (contrat §7)
 │   │   ├── crypto.test.ts           # tests Vitest
 │   │   ├── payments.ts              # client API (clé publique, virement, retry sur decryption_failed)
-│   │   └── format.ts                # formatage IBAN, conversion euros/centimes
+│   │   └── format.ts                # formatage IBAN, formatage des montants en euros
 │   ├── .env.example                 # à copier en .env.local (gitignoré)
 │   └── Dockerfile
 └── observability
@@ -235,10 +235,10 @@ docker compose -f compose.dev.yaml start payment-api
 docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT owner_id, label, iban_masked, bic FROM payments.accounts ORDER BY label;"
 
 # Soldes calculés (somme du ledger)
-docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT a.label, COALESCE(SUM(e.amount_cents),0) AS balance_cents FROM payments.accounts a LEFT JOIN payments.ledger_entries e ON e.account_id = a.id GROUP BY a.label ORDER BY a.label;"
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT a.label, COALESCE(SUM(e.amount),0) AS balance FROM payments.accounts a LEFT JOIN payments.ledger_entries e ON e.account_id = a.id GROUP BY a.label ORDER BY a.label;"
 
 # Derniers virements (ceux du prober s'accumulent : PROBE → PROBE_SINK)
-docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT created_at, amount_cents, status, dst_iban_masked FROM payments.transactions ORDER BY created_at DESC LIMIT 10;"
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT created_at, amount, status, dst_iban_masked FROM payments.transactions ORDER BY created_at DESC LIMIT 10;"
 
 # Session interactive (\dt payments.*, \d payments.accounts, etc.)
 docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience

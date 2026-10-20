@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -33,7 +34,7 @@ async def insert(
         src_account=src_account,
         dst_account=dst_account,
         dst_iban_masked=iban.mask(req.dst_iban),
-        amount_cents=req.amount_cents,
+        amount=req.amount,
         status=status,
     )
     s.add(tx)
@@ -41,8 +42,8 @@ async def insert(
     return tx
 
 
-async def insert_entries(s: AsyncSession, tx_id: UUID, entries: list[tuple[UUID, int]]) -> None:
-    s.add_all(LedgerEntry(tx_id=tx_id, account_id=a, amount_cents=amt) for a, amt in entries)
+async def insert_entries(s: AsyncSession, tx_id: UUID, entries: list[tuple[UUID, Decimal]]) -> None:
+    s.add_all(LedgerEntry(tx_id=tx_id, account_id=a, amount=amt) for a, amt in entries)
     await s.flush()
 
 

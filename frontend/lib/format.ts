@@ -32,18 +32,11 @@ export function formatIbanInput(value: string): string {
 }
 
 /**
- * Convertit un montant en euros (saisi par l'utilisateur, ex: 135.00)
- * en centimes (entier), en évitant les pièges d'arrondi flottant.
+ * Formate un montant en euros pour affichage (ex: "135.5" -> "135,50 €").
+ * Affichage seulement : le montant est envoyé à l'API tel que saisi (chaîne).
  */
-export function eurosToCents(amountInEuros: number): number {
-  return Math.round(amountInEuros * 100);
-}
-
-/**
- * Formate un montant en centimes pour affichage (ex: 13500 -> "135,00 €").
- */
-export function formatCentsAsEuros(amountInCents: number): string {
-  return (amountInCents / 100).toLocaleString("fr-FR", {
+export function formatEuros(amount: string): string {
+  return Number(amount).toLocaleString("fr-FR", {
     style: "currency",
     currency: "EUR",
   });

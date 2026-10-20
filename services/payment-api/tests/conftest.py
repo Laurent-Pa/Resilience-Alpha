@@ -102,13 +102,13 @@ def envelope(app):
     """Construit le corps de POST /payments/transfer en chiffrant comme le front."""
 
     def _envelope(
-        dst_iban: str, amount: int, *, bic: str | None = None, name: str = "Jean Dupont"
+        dst_iban: str, amount: str, *, bic: str | None = None, name: str = "Jean Dupont"
     ) -> dict:
         beneficiary = {"iban": dst_iban, "account_holder_name": name}
         if bic is not None:
             beneficiary["bic"] = bic
         return {
-            "amount_cents": amount,
+            "amount": amount,  # euros, ex. "50.05"
             **seal(app.state.transfer_cipher.public_pem, beneficiary),
         }
 

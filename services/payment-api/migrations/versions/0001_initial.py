@@ -43,13 +43,13 @@ def upgrade() -> None:
         sa.Column("src_account", sa.Uuid(), sa.ForeignKey(f"{SCHEMA}.accounts.id"), nullable=False),
         sa.Column("dst_account", sa.Uuid(), sa.ForeignKey(f"{SCHEMA}.accounts.id"), nullable=False),
         sa.Column("dst_iban_masked", sa.Text(), nullable=False),
-        sa.Column("amount_cents", sa.BigInteger(), nullable=False),
+        sa.Column("amount", sa.Numeric(12, 2), nullable=False),
         sa.Column("status", sa.Text(), nullable=False),
         sa.Column("request_hash", sa.Text(), nullable=False),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
         ),
-        sa.CheckConstraint("amount_cents > 0", name="ck_transactions_amount_positive"),
+        sa.CheckConstraint("amount > 0", name="ck_transactions_amount_positive"),
         sa.CheckConstraint("status IN ('COMPLETED','REJECTED')", name="ck_transactions_status"),
         schema=SCHEMA,
     )
@@ -65,7 +65,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(), primary_key=True),
         sa.Column("tx_id", sa.Uuid(), sa.ForeignKey(f"{SCHEMA}.transactions.id"), nullable=False),
         sa.Column("account_id", sa.Uuid(), sa.ForeignKey(f"{SCHEMA}.accounts.id"), nullable=False),
-        sa.Column("amount_cents", sa.BigInteger(), nullable=False),
+        sa.Column("amount", sa.Numeric(12, 2), nullable=False),
         schema=SCHEMA,
     )
     op.create_index("ix_ledger_entries_account_id", "ledger_entries", ["account_id"], schema=SCHEMA)

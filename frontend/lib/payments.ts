@@ -15,6 +15,7 @@ import {
   encryptTransferPayload,
   type TransferPayload,
 } from "./crypto";
+import { getAccessToken, login } from "./auth";
 
 // Confirmé via contracts/openapi-payment.json : le service expose bien
 // ses routes sous /api/payments, le WAF route sans réécriture de chemin.
@@ -45,7 +46,7 @@ export interface Payment {
   src_account: string;
   dst_account: string;
   dst_iban_masked: string;
-  amount_cents: number;
+  amount: string; // euros, ex. "50.05"
   status: "COMPLETED" | "REJECTED";
   created_at: string;
 }
@@ -111,20 +112,26 @@ async function getPublicKey(forceRefresh = false): Promise<CryptoKey> {
  */
 export async function submitTransfer(
   payload: TransferPayload,
-  amountCents: number
+  amount: string
 ): Promise<TransferResult> {
   // Un seul Idempotency-Key pour toute la tentative, y compris le retry,
   // pour que le backend identifie bien qu'il s'agit du même virement
   const idempotencyKey = crypto.randomUUID();
-  return attemptTransfer(payload, amountCents, idempotencyKey, true);
+  return attemptTransfer(payload, amount, idempotencyKey, true);
 }
 
 async function attemptTransfer(
   payload: TransferPayload,
-  amountCents: number,
+  amount: string,
   idempotencyKey: string,
   allowRetry: boolean
 ): Promise<TransferResult> {
+  const token = await getAccessToken();
+  if (!token) {
+    await login();
+    throw new Error("Session expirée, redirection vers la connexion.");
+  }
+
   const publicKey = await getPublicKey();
   const encrypted = await encryptTransferPayload(payload, publicKey);
 
@@ -133,10 +140,11 @@ async function attemptTransfer(
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": idempotencyKey,
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
       ...encrypted,
-      amount_cents: amountCents,
+      amount,
     }),
   });
 
@@ -149,7 +157,7 @@ async function attemptTransfer(
 
     if (allowRetry && isDecryptionFailure) {
       await getPublicKey(true);
-      return attemptTransfer(payload, amountCents, idempotencyKey, false);
+      return attemptTransfer(payload, amount, idempotencyKey, false);
     }
   }
 

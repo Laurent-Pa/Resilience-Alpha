@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 from uuid import UUID
 
 from payment_api.domain import bic, iban
@@ -79,7 +80,7 @@ class TransferRequest:
     # Pas de compte source : c'est l'unique compte du porteur du jeton.
     dst_iban: str  # normalisé ; ne quitte jamais la mémoire en clair
     dst_bic: str | None  # normalisé, optionnel
-    amount_cents: int
+    amount: Decimal  # euros
 
 
 def hash_request(key: bytes, owner: UUID, req: TransferRequest) -> str:
@@ -91,7 +92,7 @@ def hash_request(key: bytes, owner: UUID, req: TransferRequest) -> str:
             "owner": str(owner),
             "dst_iban": req.dst_iban,
             "dst_bic": req.dst_bic,
-            "amount_cents": req.amount_cents,
+            "amount": f"{req.amount:.2f}",  # "50.5" et "50.50" : même requête
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -121,8 +122,8 @@ def check_replay(stored_hash: str, request_hash: str) -> None:
         raise IdempotencyConflict()
 
 
-def check_funds(balance_cents: int, amount_cents: int) -> None:
-    if balance_cents < amount_cents:
+def check_funds(balance: Decimal, amount: Decimal) -> None:
+    if balance < amount:
         raise InsufficientFunds()
 
 
