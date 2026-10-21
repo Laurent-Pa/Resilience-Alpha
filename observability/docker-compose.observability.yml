@@ -1,0 +1,82 @@
+name: resilience-alpha
+
+  # ---------------------------------------------------------------
+  # SECRETS — temporaire, le temps d'implémenter le Vault
+  # ---------------------------------------------------------------
+secrets:
+  grafana_admin_password:
+    file: ../.secrets/grafana_admin_password
+
+services:
+  # ---------------------------------------------------------------
+  # PROMETHEUS — collecte et stocke les métriques
+  # ---------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+
+  # ---------------------------------------------------------------
+  # LOKI — stocke et indexe les logs
+  # ---------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: loki
+    restart: unless-stopped
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "3100:3100"
+    networks:
+      - monitoring
+
+  # ---------------------------------------------------------------
+  # GRAFANA — tableaux de bord
+  # ---------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - monitoring
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+
+# -----------------------------------------------------------------
+# RÉSEAU
+# Ce réseau "monitoring" devra être PARTAGÉ avec les conteneurs
+# métier (api, db, auth...) lors de la fusion sur le PC Hôte,
+# pour que Prometheus puisse les scraper par leur nom.
+# -----------------------------------------------------------------
+networks:
+  # Doit rester identique à compose.dev.yaml (même projet) : sinon Compose veut recréer le réseau partagé.
+  monitoring:
+    external: false

@@ -17,13 +17,11 @@ secrets:
     file: ./.secrets/rsa_private_key
   prober_client_secret:
     file: ./.secrets/prober_client_secret
-  grafana_admin_password:
-    file: ./.secrets/grafana_admin_password
 
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.0
-    command: ["start", "--import-realm"]
+    command: ["start-dev", "--import-realm"]
     # Secrets (bootstrap admin + ${...} du realm) : ./.secrets/keycloak.env, gitignored.
     # Le générer depuis les fichiers .secrets/ : voir le README / les instructions de l'étape 2.
     env_file: ./.secrets/keycloak.env
@@ -35,14 +33,13 @@ services:
       # car payment-api a OIDC_JWKS_URL en dur et n'utilise pas le discovery.
       # Le /auth doit être DANS KC_HOSTNAME : en KC26 l'iss dérive de KC_HOSTNAME sans y
       # réappliquer KC_HTTP_RELATIVE_PATH. Cohérent avec la prod (KC_HOSTNAME=.../auth, §6).
-      KC_HOSTNAME: https://localhost:8443/auth
+      KC_HOSTNAME: http://localhost:8080/auth
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
-      - ./keycloak/certs:/opt/keycloak/certs
-    ports: ["127.0.0.1:8443:8443"]
-    
+    ports: ["127.0.0.1:8080:8080"]
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -72,8 +69,6 @@ services:
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
       # localhost et 127.0.0.1 sont deux origines distinctes pour le navigateur (Docker Desktop ouvre 127.0.0.1).
       CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
-      VAULT_ADDR: https://vault:8200
-      VAULT_SKIP_VERIFY: "true"
     secrets: [db_password, iban_hmac_key, rsa_private_key]
     ports: ["127.0.0.1:8001:8000"]
     depends_on:
@@ -90,8 +85,6 @@ services:
     environment:
       TARGET_URL: http://payment-api:8000
       KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
-      VAULT_ADDR: https://vault:8200
-      VAULT_SKIP_VERIFY: "true"
     secrets: [prober_client_secret]
     ports: ["127.0.0.1:8002:8000"]
     logging:
@@ -114,102 +107,6 @@ services:
       driver: loki
       options:
         loki-url: "http://localhost:3100/loki/api/v1/push"
-
-  # ---------------------------------------------------------------
-  # PROMETHEUS — collecte et stocke les métriques
-  # ---------------------------------------------------------------
-  prometheus:
-    image: prom/prometheus:v2.54.1
-    container_name: prometheus
-    restart: unless-stopped
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.retention.time=7d'
-    ports:
-      - "9090:9090"
-    networks:
-      - monitoring
-
-  # ---------------------------------------------------------------
-  # LOKI — stocke et indexe les logs
-  # ---------------------------------------------------------------
-  loki:
-    image: grafana/loki:3.2.0
-    container_name: loki
-    restart: unless-stopped
-    volumes:
-      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
-      - loki_data:/loki
-    command: -config.file=/etc/loki/loki-config.yml
-    ports:
-      - "3100:3100"
-    networks:
-      - monitoring
-
-  # ---------------------------------------------------------------
-  # GRAFANA — tableaux de bord
-  # ---------------------------------------------------------------
-  grafana:
-    image: grafana/grafana:11.2.0
-    container_name: grafana
-    restart: unless-stopped
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
-      - GF_USERS_ALLOW_SIGN_UP=false
-    secrets: [grafana_admin_password]
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - grafana_data:/var/lib/grafana
-    ports:
-      - "3001:3000"
-    depends_on:
-      - prometheus
-      - loki
-    networks:
-      - monitoring
-
-  vault:
-    image: hashicorp/vault:latest
-    environment:
-      VAULT_API_ADDR: https://vault:8200
-      VAULT_ADDRESS: https://vault:8200
-      # Accepter les certificats auto-signés en interne
-      VAULT_SKIP_VERIFY: "true"
-    cap_add:
-      - IPC_LOCK
-    volumes:
-      - vault_data:/vault/file
-      - ./vault/config.hcl:/vault/config.hcl:ro
-      - ./vault/init-secrets.sh:/vault/init-secrets.sh:ro
-      - ./vault/certs:/vault/certs/:ro
-    ports:
-      - "127.0.0.1:8200:8200"
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8200/v1/sys/health"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
-    command: vault server -config=/vault/config.hcl
-    networks:
-      - default
-      - monitoring
-
-volumes:
-  prometheus_data:
-  loki_data:
-  grafana_data:
-  vault_data:
-
-# -----------------------------------------------------------------
-# RÉSEAU
-# Ce réseau "monitoring" devra être PARTAGÉ avec les conteneurs
-# métier (api, db, auth...) lors de la fusion sur le PC Hôte,
-# pour que Prometheus puisse les scraper par leur nom.
-# -----------------------------------------------------------------
 
 networks:
   default: {}
