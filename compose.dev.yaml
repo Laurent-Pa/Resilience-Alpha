@@ -56,7 +56,10 @@ services:
       - ./keycloak:/opt/keycloak/data/import:ro
       - ./keycloak/certs:/opt/keycloak/certs
     ports: ["127.0.0.1:8443:8443"]
-    
+    networks:               # monitoring : pour que Prometheus scrape les métriques natives (port 9000)
+      - default
+      - monitoring
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -172,6 +175,9 @@ services:
       driver: loki
       options:
         loki-url: "http://localhost:3100/loki/api/v1/push"
+    networks:               # monitoring : pour que blackbox-exporter sonde sa page d'accueil
+      - default
+      - monitoring
 
   # ---------------------------------------------------------------
   # PROMETHEUS — collecte et stocke les métriques
@@ -227,6 +233,19 @@ services:
     depends_on:
       - prometheus
       - loki
+    networks:
+      - monitoring
+
+  # ---------------------------------------------------------------
+  # BLACKBOX EXPORTER — sonde HTTP générique (frontend, waf en prod ;
+  # en dev il n'y a pas de waf, seul le job "frontend" répondra).
+  # ---------------------------------------------------------------
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
     networks:
       - monitoring
 
