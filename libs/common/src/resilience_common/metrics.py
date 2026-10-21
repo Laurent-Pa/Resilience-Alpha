@@ -50,7 +50,9 @@ class MetricsMiddleware:
             method = scope["method"]
             HTTP_REQUESTS.labels(method, template, str(status)).inc()
             HTTP_DURATION.labels(method, template).observe(time.perf_counter() - start)
-            HTTP_REQUESTS_BY_SOURCE.labels(client_ip(Headers(scope=scope), scope) or "unknown").inc()
+            HTTP_REQUESTS_BY_SOURCE.labels(
+                client_ip(Headers(scope=scope), scope) or "unknown"
+            ).inc()
 
 
 def metrics_router() -> APIRouter:

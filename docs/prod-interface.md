@@ -73,7 +73,7 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 ## 3. remediation-engine
 
 - **Build** : `services/remediation-engine/Dockerfile`. Port interne **8000**. Dev : `8003`.
-- **Dépend de** : le WAF (pour `LEDGER_URL`), le prober (`PROBER_STATUS_URL`), et **en prod les playbooks Ansible** montés dans `/playbooks`.
+- **Dépend de** : le WAF (pour `LEDGER_URL`), le prober (`PROBER_STATUS_URL`), Keycloak (jeton ops, interne), Postgres (schéma `remediation`, créé au démarrage), et **en prod les playbooks Ansible** montés dans `/playbooks`.
 
 | Variable | Défaut (dev) | Prod |
 | --- | --- | --- |
@@ -82,12 +82,27 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 | `VERIFIER` | `fake` | **`real`** |
 | `PROBER_STATUS_URL` | `http://prober:8000/status` | interne |
 | `LEDGER_URL` | `https://192.168.137.1/api/admin/ledger/check` | URL **publique** du WAF |
+| `CA_BUNDLE` | `None` | bundle CA du cert de labo du WAF (pour `LEDGER_URL` en https) |
+| `KC_TOKEN_URL` | `http://keycloak:8080/.../token` | URL **interne** de Keycloak |
+| `CLIENT_ID` | `remediation-engine` | inchangé |
+| `PLAYBOOKS_DIR` / `ACTION_TIMEOUT_S` | `/playbooks` / `60` | inchangé |
+| `DOCKER_HOST` | — | `tcp://docker-socket-proxy:2375` (lu par les modules `community.docker` des playbooks) |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` | *(vide = mémoire)* / `5432` / `resilience` / `payment_app` | **renseigner `DB_HOST`** (sinon pas de reprise au redémarrage). Le rôle doit pouvoir `CREATE SCHEMA` |
 | `COOLDOWN_S` | `120` | à aligner sur le RTO (gouvernance) |
 | `FLAPPING_MAX` / `FLAPPING_WINDOW_S` | `3` / `600` | idem |
 
-**Secret** : `webhook_hmac_key` (**obligatoire**, signature HMAC de `POST /alerts`). **Le même secret** doit être fourni au service `detection`.
+**Secrets** : `webhook_hmac_key` (**obligatoire**, signature HMAC de `POST /alerts` ; **le même** que pour `detection`), `remediation_client_secret` (jeton ops du verifier, = `REMEDIATION_CLIENT_SECRET` de Keycloak), `db_password`.
 
-**Montage prod** : les playbooks `block_ip.yml`, `recycle_service.yml`, `kill_db_conns.yml` (fournis par l'infra) dans `/playbooks`. Le moteur n'accède **jamais** à `docker.sock` directement (passe par `docker-socket-proxy`).
+**Montage prod** : les playbooks `block_ip.yml`, `recycle_service.yml`, `kill_db_conns.yml` (fournis par l'infra) dans `/playbooks` (lecture seule). Le moteur n'accède **jamais** à `docker.sock` directement (passe par `docker-socket-proxy`).
+
+**Contrat des playbooks** (ce que l'`AnsibleExecutor` fournit) :
+- exécutés par ansible-runner, inventaire `localhost ansible_connection=local` (dans le conteneur du moteur, utilisateur non-root) ; viser `hosts: localhost`, `gather_facts: false` ;
+- paramètres **déjà validés** en extravars : `block_ip.yml` → `ip` ; `recycle_service.yml` → `service` (`payment-api` | `keycloak`) ; `kill_db_conns.yml` → `db_role` (`payment_app`) ;
+- succès = `rc 0` ; tout échec ou dépassement de `ACTION_TIMEOUT_S` remonte en action `fail` dans la timeline (avec la fin de la sortie Ansible) ;
+- disponible dans l'image : `ansible-core`, collection `community.docker` 4.x, `requests`. Rien d'autre (pas de CLI `docker`, pas de `psql`) : pour `kill_db_conns`, passer par `community.docker.docker_container_exec` sur le conteneur postgres ;
+- playbook absent → log `ansible.playbooks_missing` au démarrage (le moteur démarre quand même).
+
+**Attention `kill_db_conns`** : si le moteur utilise lui aussi le rôle `payment_app`, ses connexions sont tuées. C'est encaissé (retry, puis le journal est best-effort), mais un rôle dédié (`DB_USER=remediation_app`) est plus propre.
 
 ---
 
@@ -108,12 +123,12 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 | `/` | frontend | app de paiement |
 | `/ops` | frontend (web-ops) | rôle `ops` requis |
 | `/api/payments`, `/api/accounts`, `/api/admin` | payment-api:8000 | **sans réécriture** |
-| `/api/remediation` | remediation-engine:8000 | ⚠️ les routes du moteur sont à la **racine** (`/alerts`, `/incidents`, `/events`, `/stats`) : prévoir une **réécriture** `/api/remediation/* → /*`, ou exposer le moteur à la racine. **À trancher avec le dev.** |
+| `/api/remediation` | remediation-engine:8000 | **avec réécriture** `/api/remediation/* → /*` (tranché : les routes du moteur restent à la racine, comme `/health` et `/metrics`). **Ne pas publier `/alerts`** : Alertmanager et `detection` l'appellent en interne. |
 | `/auth` | keycloak:8080 | `KC_HTTP_RELATIVE_PATH=/auth` |
 
 **Le WAF doit poser** : `X-Forwarded-For` / `X-Real-IP` (source de `src_ip` — **sans eux, la détection d'IP et `block_ip` ne fonctionnent pas**) et `X-Request-ID` (devient `trace_id`). Seul le WAF est publié ; tout le reste sur réseaux Docker internes.
 
-**Alertmanager** → `POST /alerts` du moteur, avec en-tête `X-Signature: sha256=<hex>` (HMAC `webhook_hmac_key` sur le corps brut).
+**Alertmanager** → `POST /alerts` du moteur (interne), avec `Authorization: Bearer <alertmanager_token>` (Alertmanager ne sait pas signer un corps). `detection` signe, lui, en `X-Signature: sha256=<hex>` (HMAC `webhook_hmac_key`).
 
 ---
 
@@ -126,15 +141,17 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 | `rsa_private_key` | payment-api | PEM PKCS#8 |
 | `prober_client_secret` | prober | client confidentiel `prober` |
 | `webhook_hmac_key` | remediation-engine **et** detection | même valeur des deux côtés |
-| `remediation_client_secret` | remediation-engine | **étape 7** (jeton ops du verifier) — voir §7 |
+| `remediation_client_secret` | remediation-engine | jeton ops du verifier (client `remediation-engine`) |
+| `db_password` | remediation-engine | si `DB_HOST` renseigné |
+| `alertmanager_token` | remediation-engine **et** Alertmanager | jeton bearer de `POST /alerts` |
 
 ---
 
-## 7. Écarts « étape 7 » encore ouverts côté code (bloquants pour la prod réelle)
+## 7. Étape 7 côté code : faite (21/10)
 
-1. **Verifier réel incomplet** : `ledger_check` lève `NotImplementedError` ([verifier.py:57](../services/remediation-engine/src/remediation_engine/core/verifier.py#L57)). Le moteur n'a **aucun réglage** pour obtenir un jeton ops par `client_credentials` (il manque un `kc_token_url` + un secret `remediation_client_secret` dans ses settings). À ajouter côté dev **avant** de passer `VERIFIER=real`.
-2. **AnsibleExecutor** : à brancher sur les vrais playbooks infra, vérifier sorties et timeouts.
-3. **Persistance** : le store du moteur est **en mémoire** (pas de reprise au redémarrage). Migrer vers Postgres avant la prod.
-4. **Client `remediation-engine` dans le realm Keycloak** : client confidentiel, rôle `ops`, service account (UUID `66666666-…`). À ajouter à l'export de realm.
+- **Verifier réel** : sondes prober + `ledger_check` avec jeton ops `client_credentials` (mis en cache). Une panne du prober ou du WAF compte comme « pas OK » (retry / escalade), jamais comme un crash.
+- **AnsibleExecutor** : ansible-runner, timeout par action, validé dans l'image (succès, échec, timeout).
+- **Persistance Postgres** (schéma `remediation`, DDL idempotent au démarrage) + **reprise** : incidents `EXECUTING`/`VERIFYING` repris en `VERIFYING` sans rejouer les actions ; cooldown rechargé. Base indisponible → le moteur tourne en mémoire (log `store.unavailable`).
+- **Client Keycloak** `remediation-engine` : déjà dans le realm (rôle `ops`, UUID `66666666-…`).
 
-Tant que ces points ne sont pas faits, la prod tournerait en mode dégradé (fake/real partiel). La chaîne complète **en simulation** est, elle, fonctionnelle via `compose.dev.yaml`.
+**Reste à l'infra** : les trois playbooks (contrat §3), `DOCKER_HOST` vers le docker-socket-proxy, le routage WAF (§5), Alertmanager signé vers `POST /alerts`, et les secrets Vault (§6).

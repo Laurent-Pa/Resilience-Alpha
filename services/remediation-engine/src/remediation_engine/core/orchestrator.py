@@ -71,11 +71,18 @@ class Orchestrator:
         )
         self.store.add(inc)
         metrics.MTTD.observe(inc.mttd_s)
+        self._spawn(inc)
+        return inc
+
+    def resume(self, inc: Incident) -> None:
+        """Reprend un incident non terminal rechargé au démarrage (cf. _drive)."""
+        self._spawn(inc)
+
+    def _spawn(self, inc: Incident) -> None:
         metrics.OPEN.inc()
         task = asyncio.create_task(self._run(inc))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        return inc
 
     async def drain(self) -> None:
         """Attend la fin de tous les traitements en cours (tests)."""
@@ -84,6 +91,7 @@ class Orchestrator:
     async def _run(self, inc: Incident) -> None:
         try:
             async with self._lock(inc.target):
+                await self.store.save(inc)
                 await self._drive(inc)
         except Exception:  # un incident qui plante ne doit pas tuer le moteur
             log.exception("remediation.crash", incident_id=inc.id)
@@ -91,24 +99,32 @@ class Orchestrator:
             metrics.OPEN.dec()
 
     async def _drive(self, inc: Incident) -> None:
-        window_start = m.now() - timedelta(seconds=self.flapping_window_s)
-        if self._cooldown_active(inc.target) or self.store.recent_count(
-            inc.target, window_start
-        ) > self.flapping_max:
-            return await self._escalate(inc, "cooldown_or_flapping")
+        if inc.state == m.DETECTED:
+            window_start = m.now() - timedelta(seconds=self.flapping_window_s)
+            if (
+                self._cooldown_active(inc.target)
+                or self.store.recent_count(inc.target, window_start) > self.flapping_max
+            ):
+                return await self._escalate(inc, "cooldown_or_flapping")
+            await self._transition(inc, m.TRIAGED)
 
-        await self._transition(inc, m.TRIAGED)
-        for attempt in range(self.max_attempts):
-            inc.attempt = attempt
-            await self._transition(inc, m.EXECUTING)
-            try:
-                for action in inc.plan.actions:
-                    params = build_params(action, inc)  # lève si hors liste -> aucune exécution
-                    res = await self.executor.run(action, params)
-                    await self._record_action(inc, action, params, res)
-            except Exception as exc:
-                return await self._escalate(inc, f"invalid_action:{type(exc).__name__}")
-            await self._transition(inc, m.VERIFYING)
+        # Reprise après redémarrage : EXECUTING/VERIFYING -> VERIFYING, sans rejouer les actions.
+        resuming = inc.state in (m.EXECUTING, m.VERIFYING)
+        if inc.state == m.EXECUTING:
+            await self._transition(inc, m.VERIFYING, detail="resumed")
+        for attempt in range(inc.attempt, self.max_attempts):
+            if not resuming:
+                inc.attempt = attempt
+                await self._transition(inc, m.EXECUTING)
+                try:
+                    for action in inc.plan.actions:
+                        params = build_params(action, inc)  # lève si hors liste -> rien exécuté
+                        res = await self.executor.run(action, params)
+                        await self._record_action(inc, action, params, res)
+                except Exception as exc:
+                    return await self._escalate(inc, f"invalid_action:{type(exc).__name__}")
+                await self._transition(inc, m.VERIFYING)
+            resuming = False
             if await self.verifier.check(inc.plan.verify, m.now()):
                 return await self._recover(inc)
         await self._escalate(inc, "verification_failed")
@@ -139,7 +155,8 @@ class Orchestrator:
             "result": result,
             "detail": detail,
         }
-        self.store.record_transition({**event, "from_state": from_state})
+        await self.store.save(inc)
+        await self.store.record_transition({**event, "from_state": from_state})
         (log.info if result != "fail" else log.warning)("remediation.transition", **event)
         await self.bus.publish(event)
 

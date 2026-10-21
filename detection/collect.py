@@ -20,8 +20,10 @@ def main():
     fin = time.time() + minutes * 60
 
     colonnes = prom.noms_features()
-    print(f"Collecte de trafic normal pendant {minutes} min "
-          f"(un relevé toutes les {config.POLL_INTERVAL_SECONDS} s)...")
+    print(
+        f"Collecte de trafic normal pendant {minutes} min "
+        f"(un relevé toutes les {config.POLL_INTERVAL_SECONDS} s)..."
+    )
     print("👉 Génère du trafic NORMAL pendant ce temps (pas d'attaque).")
 
     with open(config.DATA_FILE, "w", newline="") as f:

@@ -19,6 +19,8 @@ secrets:
     file: ./.secrets/prober_client_secret
   webhook_hmac_key:               # HMAC partagé detection <-> remediation-engine
     file: ./.secrets/webhook_hmac_key
+  remediation_client_secret:      # = REMEDIATION_CLIENT_SECRET de keycloak.env
+    file: ./.secrets/remediation_client_secret
 
 services:
   keycloak:
@@ -100,8 +102,9 @@ services:
       - default
       - monitoring
 
-  # Moteur de remédiation (étape 5). Fake executor/verifier en dev : l'orchestration tourne,
-  # les actions sont simulées (le vrai fix Ansible = étape 7). Secret HMAC lu dans /run/secrets.
+  # Moteur de remédiation. En dev : actions simulées (EXECUTOR=fake, pas de playbooks infra),
+  # mais vérification RÉELLE (sondes du prober + ledger_check avec jeton ops) et persistance
+  # Postgres (schéma `remediation`). Prod : EXECUTOR=ansible + playbooks montés dans /playbooks.
   remediation-engine:
     build:
       context: .
@@ -111,9 +114,16 @@ services:
       OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
       EXECUTOR: fake
-      VERIFIER: fake
-    secrets: [webhook_hmac_key]
+      VERIFIER: real
+      # En dev, pas de WAF : le ledger est lu directement sur payment-api.
+      LEDGER_URL: http://payment-api:8000/api/admin/ledger/check
+      KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
+      DB_HOST: postgres
+    secrets: [webhook_hmac_key, remediation_client_secret, db_password]
     ports: ["127.0.0.1:8003:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks: [default, monitoring]
 
   # Détection ML : lit Prometheus, poste une alerte signée au moteur quand une anomalie persiste.

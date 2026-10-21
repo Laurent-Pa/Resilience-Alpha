@@ -443,13 +443,13 @@ Le prober est un service séparé : il doit survivre à la panne de tous les aut
 
 ## 9. remediation-engine
 
-> **État : implémenté et testé (21/10, étape 5)** — `services/remediation-engine/`. FakeExecutor + FakeVerifier par défaut (`EXECUTOR`/`VERIFIER=fake`) : tourne **sans Keycloak/Postgres/prober**. AnsibleExecutor et `ledger_check` du verifier = étape 7. Store **en mémoire** (pas de reprise au redémarrage ; migrer vers Postgres avant l'étape 7). 15 tests verts + ruff.
+> **État : étape 7 faite côté code (21/10)** — `services/remediation-engine/`. AnsibleExecutor réel (ansible-runner + timeout, validé dans l'image), Verifier réel (sondes + `ledger_check` avec jeton ops `client_credentials`, erreurs réseau = « pas OK », jamais un crash), persistance Postgres (schéma `remediation`, DDL au démarrage, écritures best-effort) + reprise au redémarrage. Sans `DB_HOST` : mémoire ; `EXECUTOR`/`VERIFIER=fake` par défaut pour le dev nu. 22 tests verts + ruff. Contrat des playbooks pour l'infra : `docs/prod-interface.md` §3.
 
 ### Fonctionnement
 
 `POST /alerts` (signé HMAC) → normalisation (ml / Alertmanager) → `classify` → orchestrateur : machine d'états, dédoublonnage `(type, target)`, retries (×3), cooldown + flapping → `Executor` (fake|ansible) → `Verifier` (fake|real) → `RECOVERED` ou `ESCALATED`. Chaque transition est journalisée (`remediation.transition`), stockée et publiée sur le bus → SSE `/events`. Métriques sur `/metrics`.
 
-**Config (variables d'env)** : `EXECUTOR=fake|ansible`, `VERIFIER=fake|real`, `WEBHOOK_HMAC_KEY` (secret HMAC de `/alerts`, sinon fichier `$SECRETS_DIR/webhook_hmac_key`), `PROBER_STATUS_URL`, `LEDGER_URL`, `COOLDOWN_S`, `FLAPPING_MAX`, `FLAPPING_WINDOW_S`.
+**Config (variables d'env)** : `EXECUTOR=fake|ansible`, `VERIFIER=fake|real`, `WEBHOOK_HMAC_KEY` (secret HMAC de `/alerts`, sinon fichier `$SECRETS_DIR/webhook_hmac_key`), `PROBER_STATUS_URL`, `LEDGER_URL`, `CA_BUNDLE`, `KC_TOKEN_URL`, `CLIENT_ID`, `PLAYBOOKS_DIR`, `ACTION_TIMEOUT_S`, `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`, `COOLDOWN_S`, `FLAPPING_MAX`, `FLAPPING_WINDOW_S`. Secrets fichiers : `webhook_hmac_key`, `remediation_client_secret`, `db_password`.
 
 ### Test et démo
 
@@ -476,7 +476,7 @@ Le prober est un service séparé : il doit survivre à la panne de tous les aut
 
 | Méthode | Route                      | Auth                                                                                                             | Rôle                                           |
 | ------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| POST    | `/alerts`                  | HMAC (`X-Signature: sha256=<hex>` sur le corps brut)                                                             | Entrée des alertes Alertmanager et ml-detector |
+| POST    | `/alerts`                  | HMAC (`X-Signature: sha256=<hex>` sur le corps brut, ml) **ou** `Authorization: Bearer` (secret `alertmanager_token`, Alertmanager) | Entrée des alertes Alertmanager et ml-detector |
 | GET     | `/incidents?state=&limit=` | JWT, rôle ops                                                                                                    | Liste                                          |
 | GET     | `/incidents/{id}`          | JWT, rôle ops                                                                                                    | Détail et transitions                          |
 | GET     | `/events`                  | JWT, rôle ops (jeton passé en query, car `EventSource` ne gère pas les headers ; vérifié puis jamais journalisé) | Flux SSE                                       |
@@ -710,7 +710,7 @@ Chaque étape se termine par des tests verts et un commit. **Ne pas passer à l'
 > - **Contrat** : `contracts/alert.schema.json` figé.
 > - **Remédiation (étape 5)** : `services/remediation-engine/` **fait** — machine d'états, classifier, politique (`playbook_map.yaml`), orchestrateur (dédoublonnage, retries, cooldown, flapping), verifier, bus SSE, API `/alerts` (HMAC) + `/incidents` + `/stats` + `/events`, FakeExecutor/FakeVerifier, `scripts/fake_alert.py`. **15 tests verts + ruff.** Fonctionnement et étapes de test (dev/prod) : voir §9. Store en mémoire (persistance Postgres repoussée à l'étape 7).
 > - **uv / build (21/10)** : `uv.lock` régénéré (inclut remediation-engine), Dockerfiles en `uv sync --frozen` → **builds reproductibles**. uv **jamais** sur l'hôte (embarqué dans l'image) ; la prod n'a besoin que de Docker, uv n'est requis que côté dev pour le lock. `pythonpath` pytest pour lancer les tests sans réinstaller. Cf. §4.
-> - **Reste** : ajouter remediation-engine à `compose.dev.yaml` pour la démo conteneurisée ; puis étape 7 (AnsibleExecutor réel + `ledger_check` + playbooks infra).
+> - **Étape 7 (code) faite** : AnsibleExecutor, Verifier réel (jeton ops + ledger), persistance Postgres + reprise. `compose.dev.yaml` : moteur en `EXECUTOR=fake` + `VERIFIER=real` + Postgres. **Reste à l'infra** : playbooks (contrat dans `docs/prod-interface.md` §3), docker-socket-proxy, WAF (`/api/remediation` avec réécriture), Alertmanager signé.
 
 ### Étape 0 — Squelette (lundi)
 

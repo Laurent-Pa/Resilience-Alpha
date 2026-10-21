@@ -74,8 +74,10 @@ def main():
     paquet = joblib.load(config.MODEL_FILE)
     modele = paquet["modele"]
     colonnes = paquet["colonnes"]
-    print(f"Modèle chargé. Surveillance toutes les "
-          f"{config.POLL_INTERVAL_SECONDS} s. Ctrl+C pour arrêter.\n")
+    print(
+        f"Modèle chargé. Surveillance toutes les "
+        f"{config.POLL_INTERVAL_SECONDS} s. Ctrl+C pour arrêter.\n"
+    )
 
     anomalies_consecutives = 0
     debut_anomalie = None  # datetime du 1er relevé anormal de la série en cours

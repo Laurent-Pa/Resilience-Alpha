@@ -14,5 +14,5 @@ def test_signature_matches_reference_algo():
 
 
 def test_signature_depends_on_body_and_secret():
-    assert signer(b"k", b"a") != signer(b"k", b"b")       # corps différent
-    assert signer(b"k1", b"a") != signer(b"k2", b"a")     # secret différent
+    assert signer(b"k", b"a") != signer(b"k", b"b")  # corps différent
+    assert signer(b"k1", b"a") != signer(b"k2", b"a")  # secret différent
