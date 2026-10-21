@@ -723,6 +723,49 @@ Puis rejouer les parcours 1 à 3 dans le navigateur, et vérifier qu'aucune règ
 docker compose logs --since 10m waf | grep '"transaction"' | grep -o '"ruleId":"[0-9]*"' | sort | uniq -c
 ```
 
+Validé le 21/10 en `On` : parcours `alice` (virement, déconnexion, reconnexion) et `operator` (paiements, bascule de la sonde, Monitoring, déconnexion, reconnexion) sans aucun 403. Le test XSS répond `403`.
+
+### Passation — reprise à l'étape 5 (état au 21/10 au soir)
+
+**Ce qui tourne et a été validé** : étapes 1 à 4. La plateforme est joignable uniquement en `https://<PUBLIC_HOST>/` via le relais Windows et le WAF ModSecurity (en blocage). Le paiement, le back-office et le Monitoring fonctionnent, la sonde fait des virements `201` toutes les 5 s, et le WAF voit l'IP réelle des clients. **Ce qui reste** : étapes 5 à 8, détaillées dans [`docs/infra-todo.md`](docs/infra-todo.md) (contrat de chaque service : [`docs/prod-interface.md`](docs/prod-interface.md)).
+
+| Étape | Pilier | À faire | Détail |
+| --- | --- | --- | --- |
+| 5 — Observabilité + Alertmanager | infra | Prometheus / Loki / Grafana dans `compose.yaml` **sans port publié** ; règles d'alerte aux noms exacts attendus par le moteur ; Alertmanager → `POST /alerts` avec le secret `alertmanager_token` | `infra-todo.md` §3, §8 |
+| 6 — Remédiation réelle | infra (+ cyber pour le blocage au WAF) | docker-socket-proxy ; `block_ip.yml`, `recycle_service.yml`, `kill_db_conns.yml` ; liste de refus au WAF ; moteur en `EXECUTOR=ansible` | `infra-todo.md` §1, §2, §4, §5 |
+| 7 — Vault | cyber | certificat, initialisation et descellement ; corriger `vault/init-secrets.sh` (voir ci-dessous) | `infra-todo.md` §6 |
+| 8 — Détection + attaque | IA + cyber | réentraîner `detection/` sur le trafic du PC Hôte ; attaque `scripts/flood.py` depuis le PC Attaquant ; recette | `infra-todo.md` §7, §9 |
+
+**Démarrer la plateforme** (chaque session, et le jour J) :
+
+```bash
+# 0. Le jour J seulement : point d'accès mobile activé, PUBLIC_HOST=192.168.137.1 dans .env.
+#    Si PUBLIC_HOST a changé depuis le dernier build :
+#      bash scripts/gen-lab-pki.sh && docker compose build frontend && docker compose up -d --force-recreate keycloak
+docker compose -f compose.dev.yaml down     # jamais les deux piles en même temps (RAM)
+docker compose up -d
+docker compose ps                           # tout "healthy"
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\edge-proxy.ps1 start   # sans lui, rien ne répond sur le 443
+```
+
+**Pour tester sur un autre PC que celui de Laurent** : refaire l'étape 1 (`.env` avec **son** `PUBLIC_HOST`, `gen-lab-pki.sh`, import de la CA), créer les secrets (`.secrets/`, y compris `webhook_hmac_key` en **fichier**), décompresser nginx pour Windows dans `tools\nginx\`. La CA et les certificats sont propres à chaque machine (`certs/` est gitignoré).
+
+**Pièges connus pour la suite** (constatés ou anticipés en montant les étapes 1 à 4) :
+
+1. **Relais Windows** : il doit être démarré (`edge-proxy.ps1 status`). Le WAF n'est publié que sur `127.0.0.1:8443` et refuse les connexions sans en-tête PROXY : un test direct sur `127.0.0.1:8443` échoue, c'est voulu.
+2. **`block_ip` ne doit jamais bloquer l'IP du PC Hôte** (`PUBLIC_HOST`). La sonde et le navigateur local apparaissent sous cette IP : la bloquer couperait la preuve de reprise. Le loopback est déjà refusé par le moteur ; l'IP de l'hôte doit l'être par le playbook (en variable, elle change entre le réseau de travail et la démo).
+3. **Le driver de logs `loki` tourne dans le moteur Docker**, pas dans un conteneur : si Loki n'est publié nulle part, les logs n'arrivent pas. Publier Loki sur `127.0.0.1:3100` **uniquement**, ou collecter avec Promtail/Alloy. Plugin à installer sur l'hôte (commande dans la section « Démarrage » plus haut).
+4. **Réseaux** : `backend` est interne. Prometheus doit rejoindre les réseaux des services qu'il scrape, ou ceux-ci rejoindre `monitoring`. Métriques Keycloak : port de gestion **9000**.
+5. **Noms de conteneurs fixes** pour les playbooks : `ra-payment-api`, `ra-keycloak`, `ra-postgres`, `ra-waf`, `ra-prober`, `ra-frontend`, `ra-remediation-engine`.
+6. **Keycloak** : ne pas activer `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` (401 `Invalid issuer`) ; garder `KC_HTTP_ENABLED=true` (sinon `keycloak:8080` est fermé : 503 `jwks_unavailable` côté payment-api). Après une modification du realm : `docker compose up -d --force-recreate keycloak` (le realm n'est réimporté que dans un conteneur neuf).
+7. **ModSecurity en blocage** : un 403 inattendu sur un parcours légitime se diagnostique avec la commande de l'étape 3 (champ `data` = paramètre en cause), puis une exclusion **ciblée et justifiée** dans `waf/modsecurity/`. Ne pas repasser le WAF en `DetectionOnly` pour « faire passer » la démo.
+8. **Secrets sous forme de dossier** : si Docker monte un secret dont le fichier n'existe pas, il crée un **dossier** à sa place (c'est arrivé avec `webhook_hmac_key`). Créer chaque fichier de `.secrets/` **avant** le premier `up`, et vérifier avec `ls -la .secrets/`.
+9. **Vault (étape 7)** : `vault/certs/` est vide (gitignoré). `vault/generate-vault-cert.sh` utilise `-subj "/CN=vault"`, que Git Bash réécrit en chemin Windows : le lancer avec `MSYS_NO_PATHCONV=1 bash vault/generate-vault-cert.sh`. Le healthcheck `wget` actuel échoue tant que Vault est scellé (`503`) ou non initialisé (`501`) ; piste : `vault status -tls-skip-verify` (code 2 = scellé mais vivant, 1 = erreur). Dans `init-secrets.sh` : le moteur KV `secret/` n'existe pas en mode serveur (`vault secrets enable -path=secret kv-v2` d'abord) ; `/opt/.secrets` n'est pas monté (le script stocke silencieusement `placeholder`) ; `VAULT_ADDRESS` n'est pas une variable Vault (`VAULT_ADDR`). Aucun service ne lit Vault aujourd'hui : les secrets passent par les Docker secrets de `.secrets/`.
+10. **Détection (étape 8)** : le modèle a été entraîné sur le trafic du dev local. Il faut le **réentraîner sur le trafic normal du PC Hôte** (10 à 15 min, `detection/README.md`), sinon faux positifs ou non-détection. Depuis le PC Attaquant : `scripts/flood.py --ca lab-ca.pem` (copie de `certs/lab-ca.pem`, **jamais** la clé) ou `--insecure`.
+
 ## Pièges connus
 
 Voir `.claude/CLAUDE.md` §13 pour la liste complète (émetteur Keycloak public vs interne, `EventSource` sans headers, deadlocks sur verrouillage de comptes, RAM sous Docker Desktop/WSL2, etc.). Deux déjà rencontrés en local :

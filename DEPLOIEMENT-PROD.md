@@ -6,6 +6,11 @@ Keycloak `start-dev`, secrets en fichiers) à la prod derrière WAF + Vault.
 `compose.dev.yaml` est un environnement de dev local **jetable**. Il ne doit pas servir de base
 telle quelle : reprendre les images et les variables, mais appliquer tous les points ci-dessous.
 
+> **État au 21/10** : [`compose.yaml`](compose.yaml) (PC Hôte) applique cette checklist, sauf ce qui
+> relève de Vault (§2), d'une base Postgres dédiée à Keycloak (§1) et de `EXECUTOR=ansible` (§5).
+> Procédure, vérifications et note de passation : README, section « Déploiement sur le PC Hôte ».
+> La colonne « Dev » ci-dessous décrit `compose.dev.yaml` ; la colonne « Prod », la cible.
+
 ---
 
 ## 1. Keycloak
@@ -18,6 +23,9 @@ telle quelle : reprendre les images et les variables, mais appliquer tous les po
 | TLS | HTTPS auto-signé, terminé par Keycloak lui-même (cert généré par `keycloak/generate-keycloak-cert.sh`, voir `KC_HTTPS_CERTIFICATE_FILE`/`KC_HTTPS_CERTIFICATE_KEY_FILE`) | HTTPS, terminé au WAF ; `KC_PROXY_HEADERS=xforwarded` |
 | Admin | `KC_BOOTSTRAP_ADMIN_*` en clair dans `keycloak.env` | identifiants admin forts, fournis par Vault, **rotation après le 1er boot** |
 | Divers | — | `KC_HEALTH_ENABLED=true`, `KC_METRICS_ENABLED=true`, logs JSON |
+| HTTP interne | `KC_HTTP_ENABLED=true` (sinon le port 8080 est fermé en mode `start`) | **idem, obligatoire** : JWKS et jetons du prober / moteur passent par `keycloak:8080` |
+
+**Dans `compose.yaml`** : `start --import-realm`, HTTP derrière le WAF (`KC_HTTP_ENABLED=true`, `KC_PROXY_HEADERS=xforwarded`), `KC_HOSTNAME=https://${PUBLIC_HOST}/auth`, `redirectUris` du realm paramétrées par `${PUBLIC_HOST:192.168.137.1}`. Écart assumé : base H2 interne au conteneur (RAM du PC Hôte), realm réimporté à chaque recréation du conteneur.
 
 **Backchannel dynamique.** Ne **pas** activer `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` sans avoir
 réglé le point §4. Avec cette option, l'`iss` du jeton dépend de l'hôte appelant : le prober et le
@@ -54,13 +62,17 @@ Le realm `keycloak/realm-resilience.json` contient des **placeholders** (`${PROB
 
 - **Seul le WAF est publié.** Tous les services (payment-api, prober, remediation-engine, keycloak,
   postgres) restent sur des réseaux Docker internes, sans port exposé sur l'hôte. Retirer tous les
-  `ports: ["127.0.0.1:..."]` du dev.
-- **Routage WAF** (sans réécriture de chemin) :
-  - `/` → `web-pay` ; `/ops` → `web-ops` ;
-  - `/api/payments`, `/api/accounts`, `/api/admin` → payment-api ;
-  - `/api/remediation` → remediation-engine ;
+  `ports: ["127.0.0.1:..."]` du dev. **Fait dans `compose.yaml`.**
+- **Routage WAF** :
+  - `/` → frontend (paiement, et back-office sous `/admin`, client Keycloak `web-ops`) ;
+  - `/api/payments`, `/api/accounts`, `/api/admin` → payment-api (sans réécriture) ;
+  - `/api/remediation/*` → remediation-engine (**préfixe retiré**, cf. `docs/prod-interface.md` §5) ;
   - `/auth` → keycloak.
-- Le WAF pose `X-Request-ID`, `X-Forwarded-For` / `X-Real-IP` (exploités dans les logs, §5 du handoff).
+- Le WAF pose `X-Request-ID`, `X-Forwarded-For` / `X-Real-IP` (exploités dans les logs, §5 du handoff),
+  en **écrasant** ceux du client.
+- **IP réelle sous Docker Desktop** : un WAF publié directement voit tous les clients en `172.x`
+  (passerelle Docker). Le 443 de l'hôte est donc tenu par un relais L4 (nginx pour Windows) qui transmet
+  l'IP réelle au WAF par PROXY protocol : [`docs/decision-proxy-l4-ip-source.md`](docs/decision-proxy-l4-ip-source.md).
 - **TLS labo** : le prober doit valider le certificat auto-signé du WAF via un **bundle CA**
   (`CA_BUNDLE`), **jamais** `verify=False` en dur.
 
@@ -109,11 +121,13 @@ le réseau interne* et vérifier que son `iss` vaut l'émetteur **public** (avec
 
 ## 7. Points de vérification avant le jury
 
-- [ ] `KC_HOSTNAME` public contient `/auth` ; `iss` du jeton prober interne = émetteur public (§4).
+- [x] `KC_HOSTNAME` public contient `/auth` ; `iss` du jeton prober interne = émetteur public (§4). *Vérifié le 21/10 sur `compose.yaml`.*
 - [ ] `rsa_private_key` fourni par Vault (pas de log `crypto.ephemeral_rsa_key` au boot de payment-api).
 - [ ] `iban_hmac_key` figé et sauvegardé ; jamais régénéré sur une base existante.
-- [ ] Aucun port de service exposé hors WAF ; `docker.sock` inaccessible au moteur.
+- [ ] Aucun port de service exposé hors WAF ; `docker.sock` inaccessible au moteur. *Ports : fait le 21/10 ; docker-socket-proxy : reste à faire.*
 - [ ] `EXECUTOR=ansible` et playbooks montés ; un recyclage réel aboutit à `RECOVERED` (étape 7).
-- [ ] Prober en TLS via `CA_BUNDLE` (pas de `verify=False`).
+- [x] Prober en TLS via `CA_BUNDLE` (pas de `verify=False`). *CA de labo, vérifié le 21/10 (virements `201` via le WAF).*
+- [ ] Relais L4 Windows démarré et IP réelle vérifiée depuis le PC Attaquant (`src_ip` dans le journal du WAF).
+- [ ] ModSecurity en `On`, aucun 403 sur les parcours de démo (journal d'audit vide hors tests d'attaque).
 - [ ] Comptes de test Keycloak retirés si non souhaités en prod.
 - [ ] `.gitattributes` en `eol=lf` (scripts/entrypoints cassent sinon dans les conteneurs).

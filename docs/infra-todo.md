@@ -1,8 +1,10 @@
-# Reste à faire côté infra — état au 21/10
+# Reste à faire côté infra — état au 21/10 (soir)
 
 Public : le pilier **infra**. Le code (payment-api, prober, remediation-engine, detection) est prêt pour la prod ; ce document liste **tout ce qui manque côté infra** pour que la démo de remédiation autonome tourne en vrai, sans intervention humaine.
 
 Référence détaillée des variables, secrets et ports de chaque service : [prod-interface.md](prod-interface.md). Écarts dev → prod (Keycloak, `iss`, TLS) : [../DEPLOIEMENT-PROD.md](../DEPLOIEMENT-PROD.md).
+
+> **Point de reprise (21/10 soir).** `compose.yaml` (PC Hôte, projet `resilience-host`) tourne de bout en bout derrière le WAF : PKI de labo, Keycloak en mode prod, WAF ModSecurity en blocage, proxy L4 Windows (IP réelle des clients), front et back-office validés en recette. La procédure pas à pas, les vérifications de chaque étape et la **note de passation** (pièges connus) sont dans le [README, section « Déploiement sur le PC Hôte »](../README.md#déploiement-sur-le-pc-hôte-configuration-de-démo-proche-de-la-prod). Reste : étapes 5 à 8 de ce README, détaillées ci-dessous (§1, §2, §3, §6, §7, §8).
 
 **Légende** : 🔴 bloquant pour la démo · 🟠 nécessaire en prod · 🟢 confort
 
@@ -14,11 +16,12 @@ Référence détaillée des variables, secrets et ports de chaque service : [pro
 | --- | --- | --- |
 | Détection IA (`detection/`) → `POST /alerts` | ✅ code prêt | modèle à réentraîner sur site (§7) |
 | Alertmanager → `POST /alerts` | ❌ (auth par jeton prête côté moteur) | règles + routage (§3) |
-| Moteur : classification, décision, vérification | ✅ code prêt | config prod (§5) |
+| Moteur : classification, décision, vérification | ✅ déployé (`compose.yaml`, `VERIFIER=real`) | passer `EXECUTOR=ansible` (§5) |
 | **Exécution réelle des actions** | ❌ | **les 3 playbooks** + docker-socket-proxy (§1, §2) |
-| Preuve de reprise (prober via WAF + ledger) | ✅ code prêt | WAF + CA (§4) |
+| Preuve de reprise (prober via WAF + ledger) | ✅ validé le 21/10 (virements `201` via relais + WAF) | — |
+| WAF + IP réelle des clients | ✅ validé le 21/10 (§4) | mécanisme de liste de refus pour `block_ip` (§4) |
 
-Aujourd'hui en dev, les actions sont **simulées** (`EXECUTOR=fake`). Tant que §1 et §2 ne sont pas faits, rien n'est réellement remédié.
+Aujourd'hui, y compris dans `compose.yaml`, les actions sont **simulées** (`EXECUTOR=fake`). Tant que §1 et §2 ne sont pas faits, rien n'est réellement remédié.
 
 ---
 
@@ -38,6 +41,12 @@ Contraintes d'exécution (imposées par le moteur) :
 - outils disponibles dans l'image : `ansible-core`, collection **`community.docker` 4.x**, `requests`. **Pas** de CLI `docker`, **pas** de `psql` → passer par les modules `community.docker.*` (ex. `docker_container` avec `restart: true`, `docker_container_exec` sur le conteneur postgres pour `kill_db_conns`) ;
 - succès = code retour 0. Tout échec ou dépassement de `ACTION_TIMEOUT_S` (60 s par défaut) apparaît comme action `fail` dans la timeline, puis retry (×3) et escalade ;
 - un playbook manquant est signalé au démarrage par le log `ansible.playbooks_missing`.
+
+Spécificités du PC Hôte (`compose.yaml`, constatées le 21/10) :
+
+- **Noms de conteneurs fixes** : `ra-payment-api`, `ra-keycloak`, `ra-postgres`, `ra-waf` (et `ra-prober`, `ra-frontend`, `ra-remediation-engine`). `recycle_service.yml` peut mapper `service` → `ra-<service>`.
+- **`block_ip.yml` doit refuser l'IP du PC Hôte** (`PUBLIC_HOST`, en plus du loopback déjà refusé par le moteur). La sonde (qui sort de Docker et revient par l'adresse publique) et le navigateur local apparaissent sous cette IP : la bloquer couperait la preuve de reprise. Passer l'IP à exclure en variable (ex. `PUBLIC_HOST` dans l'environnement du moteur) plutôt qu'en dur : elle change entre le réseau de travail et le point d'accès de démo (`192.168.137.1`).
+- Le blocage se fait **au WAF** (§4), le seul à voir l'IP réelle des clients.
 
 Squelette :
 
@@ -68,7 +77,7 @@ Le moteur **n'accède jamais** à `docker.sock`.
 
 ## 3. 🔴 Alertmanager (et règles Prometheus)
 
-Aucune règle d'alerte ni Alertmanager n'existe encore dans `observability/`. Prometheus ne fait que scraper.
+Aucune règle d'alerte ni Alertmanager n'existe encore (configuration Prometheus : `prometheus/prometheus.yml` à la racine ; le dossier `observability/` n'existe plus). Prometheus ne fait que scraper, et seulement dans `compose.dev.yaml` : l'observabilité n'est pas encore dans `compose.yaml` (étape 5 du README).
 
 ### 3.1 Règles : noms et labels **exacts**
 
@@ -136,15 +145,16 @@ Sans ce secret côté moteur, l'authentification par jeton est désactivée (seu
 
 | Chemin public | Vers | Réécriture |
 | --- | --- | --- |
-| `/` | frontend | non |
-| `/ops` | frontend (web-ops) | non |
+| `/` | frontend (paiement, et back-office sous `/admin`, client Keycloak `web-ops`) | non |
 | `/api/payments`, `/api/accounts`, `/api/admin` | `payment-api:8000` | **non** |
 | `/api/remediation/*` | `remediation-engine:8000/*` | **oui** (préfixe retiré) |
 | `/auth` | `keycloak:8080` | non |
 
 - **Ne pas publier** `/alerts`, `/health/*`, `/metrics`.
 - Poser **`X-Forwarded-For` / `X-Real-IP`** (sans eux : pas de `src_ip`, donc ni détection d'IP ni `block_ip`) et **`X-Request-ID`**.
-- Mécanisme de blocage d'IP pilotable par `block_ip.yml` (liste de refus + rechargement), idempotent.
+- ✅ **Fait (21/10)** : routage, en-têtes, SSE, query string non journalisée, TLS (certificat de labo), ModSecurity + CRS en **blocage**, exclusions justifiées (`waf/modsecurity/`), relais L4 Windows. Configuration : `waf/nginx/default.conf.template`, service `waf` de `compose.yaml`.
+- 🔴 **Reste** : mécanisme de blocage d'IP pilotable par `block_ip.yml` (liste de refus + rechargement), idempotent. Piste : un dossier monté en écriture dans le conteneur `ra-waf` (`include .../blocklist/*.conf;` au niveau `server`, une ligne `deny <ip>;` par IP) puis `nginx -s reload` via `docker_container_exec`. `deny` s'applique à `$remote_addr`, qui est **l'IP réelle** grâce au PROXY protocol.
+- 🟠 **Reste** : figer l'image `owasp/modsecurity-crs:nginx-alpine` par son digest (commande dans le README, étape 3).
 - `/api/remediation/events` est un flux **SSE** : désactiver le buffering (`proxy_buffering off` sous nginx), timeout de lecture ≥ 60 s ; le jeton passe en query → **ne pas journaliser la query string** de cette route.
 - Fournir le **bundle CA** du certificat de labo, monté dans le prober et le moteur (`CA_BUNDLE`).
 - ⚠️ **IP source et Docker Desktop (21/10)** : un WAF publié directement voit toutes les connexions venir de la passerelle Docker (`172.x`), donc `X-Forwarded-For` serait faux pour tout le monde. Retenu : un proxy L4 nginx pour Windows sur le 443 de l'hôte, qui transmet l'IP réelle au WAF par PROXY protocol, avec le WAF publié sur `127.0.0.1:8443` seulement. Détails et alternatives écartées : [decision-proxy-l4-ip-source.md](decision-proxy-l4-ip-source.md). Implémenté dans `compose.yaml`, `waf/`, `edge/`.
@@ -153,7 +163,7 @@ Sans ce secret côté moteur, l'authentification par jeton est désactivée (seu
 
 ## 5. 🔴 `compose.yaml` de prod : services du pilier dev
 
-Repartir de `compose.dev.yaml` en appliquant [DEPLOIEMENT-PROD.md](../DEPLOIEMENT-PROD.md). Spécifique au moteur :
+✅ **Fait (21/10)** : `compose.yaml` existe (projet `resilience-host`, conteneurs `ra-*`), avec tous les services du pilier dev, sans port publié, `restart: unless-stopped`, émetteur public, `CA_BUNDLE`, moteur en `VERIFIER=real` + `DB_HOST=postgres`. **Reste**, pour le moteur, ce qui dépend de §1, §2 et §3 :
 
 ```yaml
 remediation-engine:
@@ -174,8 +184,8 @@ remediation-engine:
 
 - Le moteur crée lui-même son schéma `remediation` au démarrage : son rôle Postgres doit avoir le droit `CREATE` sur la base.
 - 🟠 Rôle Postgres **dédié** au moteur (`DB_USER=remediation_app`) recommandé : avec `payment_app`, `kill_db_conns` coupe aussi les connexions du moteur (encaissé, mais sale).
-- Aucun `ports:` sur les services ; seul le WAF est publié. Cela vaut aussi pour **Prometheus (9090), Loki (3100), Grafana (3001)**, aujourd'hui publiés dans `docker-compose.observability.yml` (Grafana éventuellement derrière le WAF).
-- 🟠 `restart: unless-stopped` sur tous les services : le prober doit survivre à tout le reste.
+- Aucun `ports:` sur les services ; seul le WAF est publié (sur `127.0.0.1:8443`, derrière le relais). Cela vaut aussi pour **Prometheus, Loki, Grafana**, encore publiés dans `compose.dev.yaml` : en les ajoutant à `compose.yaml`, ne pas reprendre leurs `ports:` (exception possible : Loki sur `127.0.0.1:3100`, voir §8). Grafana éventuellement derrière le WAF.
+- ✅ `restart: unless-stopped` sur tous les services de `compose.yaml`.
 
 ---
 
@@ -207,7 +217,10 @@ Côté Keycloak : `PROBER_CLIENT_SECRET`, `REMEDIATION_CLIENT_SECRET`, `TEST_USE
 
 ## 8. 🟢 Observabilité
 
-- Scrape déjà en place pour `payment-api`, `prober`, `remediation-engine`. Ajouter Keycloak (`KC_METRICS_ENABLED=true`).
+- Scrape déjà en place pour `payment-api`, `prober`, `remediation-engine` (dans `prometheus/prometheus.yml`). Ajouter Keycloak (`KC_METRICS_ENABLED=true` : métriques sur le port de gestion **9000**, pas sur 8080).
+- ⚠️ **Réseaux** : dans `compose.yaml`, `backend` est **interne**. Prometheus doit rejoindre les réseaux des services qu'il scrape, ou les services doivent rejoindre `monitoring`.
+- ⚠️ **Loki et le driver de logs Docker** : le driver `loki` tourne dans le **moteur Docker**, pas dans un conteneur. Si Loki n'est publié nulle part, il ne peut pas l'atteindre et les logs sont perdus. Soit publier Loki sur `127.0.0.1:3100` uniquement (driver `loki-url: http://localhost:3100/...`), soit collecter avec Promtail/Alloy. Le plugin doit être installé sur l'hôte (`docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions`).
+- Le WAF journalise en JSON (`"service":"waf"`, `src_ip`, `trace_id`) : utile pour les dashboards d'attaque et pour la règle `WafBlocksBurst` (journal d'audit ModSecurity : lignes `"transaction"`).
 - Dashboards Grafana : `probe_success`, `probe_latency_seconds`, `http_requests_total{status}`, `http_requests_by_source_total{src_ip}`, `incidents_total{type,outcome}`, `incidents_open`, `incident_mttd_seconds`, `incident_mttr_seconds`, `remediation_actions_total{action,result}`.
 - Loki : n'indexer que `service` et `level`. Événements utiles pour les dashboards : `remediation.transition`, `probe.result`, `verifier.ledger_check`, `ansible.error`, `store.write_failed`.
 

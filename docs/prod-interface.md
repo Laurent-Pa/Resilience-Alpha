@@ -5,6 +5,8 @@ Ce document liste, pour chaque service du pilier **dev**, ce que son code attend
 
 > Rien ici n'est à implémenter côté dev. C'est le contrat pour câbler la prod. Les écarts « étape 7 » (encore absents du code) sont signalés en fin de document.
 
+> **Implémentation de référence (21/10)** : [`compose.yaml`](../compose.yaml) applique ce contrat sur le PC Hôte (procédure et vérifications : README, « Déploiement sur le PC Hôte »). En cas de doute entre ce document et `compose.yaml`, `compose.yaml` est la configuration **testée**.
+
 ---
 
 ## 0. Conventions communes (tous les services Python)
@@ -22,7 +24,7 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 - **Secrets = fichiers**, un fichier par champ, nommé exactement comme le champ (ex. `db_password`), dans `SECRETS_DIR`. Jamais de secret en variable d'environnement.
 - Chaque service écoute en **interne sur le port 8000** et expose `GET /health/live`, `GET /health/ready`, `GET /metrics`.
 - Logs JSON une ligne sur stdout (collecte Loki). `/health/ready` ne dépend **jamais** de Keycloak.
-- Piège `iss` : on valide l'émetteur **public** mais on récupère le JWKS en **interne**. Keycloak doit donc être configuré `KC_HOSTNAME=https://<public>/auth`, `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`.
+- Piège `iss` : on valide l'émetteur **public** mais on récupère le JWKS en **interne**. Keycloak doit donc être configuré `KC_HOSTNAME=https://<public>/auth` **sans** `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` : avec cette option, un jeton obtenu en interne (prober, moteur) porte un `iss` interne et payment-api répond 401 `Invalid issuer` (cf. [DEPLOIEMENT-PROD.md](../DEPLOIEMENT-PROD.md) §1 et §4). Derrière le WAF : `KC_HTTP_ENABLED=true` (en mode `start`, le port HTTP interne 8080 est **fermé** par défaut) et `KC_PROXY_HEADERS=xforwarded`. Validé sur le PC Hôte le 21/10 : l'émetteur annoncé en interne est bien l'émetteur public.
 
 ---
 
@@ -120,13 +122,14 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 
 | Chemin public | Vers | Note |
 | --- | --- | --- |
-| `/` | frontend | app de paiement |
-| `/ops` | frontend (web-ops) | rôle `ops` requis |
+| `/` | frontend | app de paiement ; back-office sous `/admin` (même application, client Keycloak `web-ops`, rôle `ops` requis) |
 | `/api/payments`, `/api/accounts`, `/api/admin` | payment-api:8000 | **sans réécriture** |
 | `/api/remediation` | remediation-engine:8000 | **avec réécriture** `/api/remediation/* → /*` (tranché : les routes du moteur restent à la racine, comme `/health` et `/metrics`). **Ne pas publier `/alerts`** : Alertmanager et `detection` l'appellent en interne. |
 | `/auth` | keycloak:8080 | `KC_HTTP_RELATIVE_PATH=/auth` |
 
 **Le WAF doit poser** : `X-Forwarded-For` / `X-Real-IP` (source de `src_ip` — **sans eux, la détection d'IP et `block_ip` ne fonctionnent pas**) et `X-Request-ID` (devient `trace_id`). Seul le WAF est publié ; tout le reste sur réseaux Docker internes.
+
+**Implémenté (21/10)** dans [`waf/nginx/default.conf.template`](../waf/nginx/default.conf.template). `X-Forwarded-For` est **écrasé** par l'IP de connexion (jamais complété : un en-tête forgé ferait bloquer une autre IP). Sous Docker Desktop, cette IP n'est réelle que grâce au relais L4 Windows et au PROXY protocol : voir [decision-proxy-l4-ip-source.md](decision-proxy-l4-ip-source.md).
 
 **Alertmanager** → `POST /alerts` du moteur (interne), avec `Authorization: Bearer <alertmanager_token>` (Alertmanager ne sait pas signer un corps). `detection` signe, lui, en `X-Signature: sha256=<hex>` (HMAC `webhook_hmac_key`).
 
