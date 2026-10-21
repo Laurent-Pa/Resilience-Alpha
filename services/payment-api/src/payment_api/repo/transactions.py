@@ -26,6 +26,7 @@ async def insert(
     src_account: UUID,
     dst_account: UUID,
     status: str,
+    initiated_by: str,
 ) -> Transaction:
     tx = Transaction(
         idempotency_key=key,
@@ -36,6 +37,7 @@ async def insert(
         dst_iban_masked=iban.mask(req.dst_iban),
         amount=req.amount,
         status=status,
+        initiated_by=initiated_by,
     )
     s.add(tx)
     await s.flush()

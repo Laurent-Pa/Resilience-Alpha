@@ -14,9 +14,17 @@ from payment_api.repo import transactions as tx_repo
 
 
 async def transfer(
-    s: AsyncSession, key: str, owner: UUID, req: TransferRequest, pseudo: Pseudonymizer
+    s: AsyncSession,
+    key: str,
+    owner: UUID,
+    req: TransferRequest,
+    pseudo: Pseudonymizer,
+    initiated_by: str,
 ) -> tuple[Transaction, bool]:
-    """Exécute un virement idempotent. Renvoie (transaction, créée?)."""
+    """Exécute un virement idempotent. Renvoie (transaction, créée?).
+
+    `initiated_by` est décidé par la couche API, seule à voir les rôles du jeton. Un
+    rejeu ne le réécrit pas : la ligne garde l'origine de sa création."""
     rules.validate_transfer(req)
     request_hash = rules.hash_request(pseudo.key, owner, req)
 
@@ -41,7 +49,7 @@ async def transfer(
             rules.check_funds(await accounts_repo.balance(s, src.id), req.amount)
 
             tx = await tx_repo.insert(
-                s, key, request_hash, owner, req, src.id, dst.id, STATUS_COMPLETED
+                s, key, request_hash, owner, req, src.id, dst.id, STATUS_COMPLETED, initiated_by
             )
             await tx_repo.insert_entries(s, tx.id, [(src.id, -req.amount), (dst.id, req.amount)])
             return tx, True
