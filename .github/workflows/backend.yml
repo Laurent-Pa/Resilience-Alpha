@@ -8,6 +8,7 @@ on:
       - "libs/**"
       - "services/**"
       - "contracts/**"
+      - "keycloak/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
@@ -39,8 +40,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [payment-api, prober]
+        service: [payment-api, prober, face-auth]
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.service }}
         run: docker build -f services/${{ matrix.service }}/Dockerfile .
+
+  # Keycloak + authenticator facial (compile le SPI Java avec Maven dans le build).
+  keycloak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build keycloak
+        run: docker build keycloak

@@ -118,6 +118,26 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 
 ---
 
+## 4 bis. face-auth (second facteur facial du back-office)
+
+- **Build** : `services/face-auth/Dockerfile`, **contexte = racine du dépôt**. Les modèles ONNX
+  (YuNet, SFace) sont téléchargés **au build**, figés par sha256 : rien n'est téléchargé au démarrage.
+- **Env** : `DB_HOST=postgres` (schéma `biometrics`, créé au démarrage), `OIDC_ISSUER` (public),
+  `OIDC_JWKS_URL` (interne). `CORS_ORIGINS` inutile derrière le WAF (même origine).
+- **Secrets** : `face_service_token`, `biometric_key`, `db_password`. Sans les deux premiers :
+  **démarrage refusé**. `biometric_key` est **immuable** (sinon les empreintes ne se déchiffrent
+  plus : il faut ré-enrôler).
+- `/health/ready` vérifie la DB. Métriques : `face_verifications_total{outcome}`,
+  `face_enrollments_total{action}`.
+- **Keycloak** : image construite depuis `keycloak/Dockerfile` (image officielle 26.8.0 + jar de
+  l'authenticator). Variable `FACE_AUTH_URL=http://face-auth:8000` ; secret `face_service_token`
+  monté en `/run/secrets/face_service_token` (ou chemin dans `FACE_AUTH_TOKEN_FILE`). Keycloak et
+  face-auth doivent partager un réseau interne.
+- **Caméra** : branchée sur le PC Hôte ; le back-office est ouvert dans un navigateur de ce PC,
+  en HTTPS via le WAF (le navigateur exige un contexte sécurisé pour `getUserMedia`).
+
+---
+
 ## 5. WAF — routage attendu (sans réécriture de chemin, sauf mention)
 
 | Chemin public | Vers | Note |
@@ -126,6 +146,7 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 | `/api/payments`, `/api/accounts`, `/api/admin` | payment-api:8000 | **sans réécriture** |
 | `/api/remediation` | remediation-engine:8000 | **avec réécriture** `/api/remediation/* → /*` (tranché : les routes du moteur restent à la racine, comme `/health` et `/metrics`). **Ne pas publier `/alerts`** : Alertmanager et `detection` l'appellent en interne. |
 | `/auth` | keycloak:8080 | `KC_HTTP_RELATIVE_PATH=/auth` |
+| `/api/biometrics` | face-auth:8000 | **sans réécriture**. **Ne jamais publier `/internal`** (appelé par Keycloak seul). Corps jusqu'à ~3 Mo (image en base64) |
 
 **Le WAF doit poser** : `X-Forwarded-For` / `X-Real-IP` (source de `src_ip` — **sans eux, la détection d'IP et `block_ip` ne fonctionnent pas**) et `X-Request-ID` (devient `trace_id`). Seul le WAF est publié ; tout le reste sur réseaux Docker internes.
 
@@ -147,6 +168,9 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 | `remediation_client_secret` | remediation-engine | jeton ops du verifier (client `remediation-engine`) |
 | `db_password` | remediation-engine | si `DB_HOST` renseigné |
 | `alertmanager_token` | remediation-engine **et** Alertmanager | jeton bearer de `POST /alerts` |
+| `face_service_token` | face-auth **et** Keycloak | jeton bearer des routes `/internal` |
+| `biometric_key` | face-auth | AES-256-GCM des empreintes, 32 octets hex, **immuable** |
+| `db_password` | face-auth | rôle `payment_app` (schéma `biometrics`) |
 
 ---
 

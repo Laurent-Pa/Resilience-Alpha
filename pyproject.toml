@@ -41,7 +41,7 @@ extend-immutable-calls = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["resilience_common", "payment_api", "prober", "remediation_engine", "config", "prom", "signing"]
+known-first-party = ["resilience_common", "payment_api", "prober", "remediation_engine", "face_auth", "config", "prom", "signing"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib -ra"
@@ -52,6 +52,7 @@ pythonpath = [
     "services/payment-api/src",
     "services/prober/src",
     "services/remediation-engine/src",
+    "services/face-auth/src",
     "detection",
 ]
 asyncio_mode = "auto"

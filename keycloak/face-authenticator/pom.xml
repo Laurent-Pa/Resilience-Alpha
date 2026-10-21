@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Authenticator Keycloak « reconnaissance faciale » : étape caméra entre la saisie de
+  l'identifiant et celle du mot de passe, pour les utilisateurs du rôle realm `ops`.
+  La décision est prise par le service face-auth ; ce module ne fait que l'orchestrer.
+
+  Build : via keycloak/Dockerfile (Maven dans un conteneur, rien à installer sur l'hôte).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>fr.resilience</groupId>
+  <artifactId>face-authenticator</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <!-- Garder aligné sur l'image quay.io/keycloak/keycloak de keycloak/Dockerfile. -->
+    <keycloak.version>26.8.0</keycloak.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Tout est fourni par Keycloak à l'exécution : le jar ne contient que notre code. -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi-private</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-services</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>face-authenticator</finalName>
+  </build>
+</project>

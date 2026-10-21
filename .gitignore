@@ -33,3 +33,6 @@ edge/logs/
 */init-response
 **/certs/
 vault/init-response.json
+
+# Build local éventuel de l'authenticator Keycloak
+keycloak/face-authenticator/target/

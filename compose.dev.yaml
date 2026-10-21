@@ -5,6 +5,8 @@
 #   openssl rand -hex 32 > .secrets/iban_hmac_key
 #   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
 #   echo <secret du client prober dans Keycloak> > .secrets/prober_client_secret
+#   openssl rand -hex 32 > .secrets/face_service_token   # Keycloak <-> face-auth
+#   openssl rand -hex 32 > .secrets/biometric_key        # chiffrement des empreintes faciales
 # Keycloak lit ses secrets depuis ./.secrets/keycloak.env (PROBER_CLIENT_SECRET,
 # REMEDIATION_CLIENT_SECRET, TEST_USERS_PASSWORD, KC_BOOTSTRAP_ADMIN_*).
 # Keycloak sert en HTTPS (:8443) : générer un certificat auto-signé avec
@@ -26,10 +28,15 @@ secrets:
     file: ./.secrets/webhook_hmac_key
   remediation_client_secret:      # = REMEDIATION_CLIENT_SECRET de keycloak.env
     file: ./.secrets/remediation_client_secret
+  face_service_token:             # jeton partagé authenticator Keycloak <-> face-auth (/internal)
+    file: ./.secrets/face_service_token
+  biometric_key:                  # AES-256-GCM des empreintes faciales (hex, 32 octets)
+    file: ./.secrets/biometric_key
 
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.0
+    # Image officielle + authenticator « reconnaissance faciale » (keycloak/face-authenticator).
+    build: ./keycloak
     command: ["start", "--import-realm"]
     # Secrets (bootstrap admin + ${...} du realm) : ./.secrets/keycloak.env, gitignored.
     # Le générer depuis les fichiers .secrets/ : voir le README / les instructions de l'étape 2.
@@ -52,8 +59,11 @@ services:
       # de configuration TLS et le conteneur ne démarre pas.
       KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/keycloak.crt
       KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
+      # Étape caméra des comptes ops : Keycloak appelle face-auth en interne.
+      FACE_AUTH_URL: http://face-auth:8000
+    secrets: [face_service_token]
     volumes:
-      - ./keycloak:/opt/keycloak/data/import:ro
+      - ./keycloak/realm-resilience.json:/opt/keycloak/data/import/realm-resilience.json:ro
       - ./keycloak/certs:/opt/keycloak/certs
     ports: ["127.0.0.1:8443:8443"]
     networks:               # monitoring : pour que Prometheus scrape les métriques natives (port 9000)
@@ -159,6 +169,25 @@ services:
     depends_on: [remediation-engine]
     networks: [default, monitoring]
 
+  # Second facteur facial du back-office (rôle ops). /internal : Keycloak seulement ;
+  # /api/biometrics : page « Biométrie » du back-office (JWT ops, audience face-auth).
+  face-auth:
+    build:
+      context: .
+      dockerfile: services/face-auth/Dockerfile
+    environment:
+      LOG_LEVEL: INFO
+      DB_HOST: postgres
+      OIDC_ISSUER: https://localhost:8443/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+    secrets: [face_service_token, biometric_key, db_password]
+    ports: ["127.0.0.1:8004:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [default, monitoring]
+
   frontend:
     build:
       context: ./frontend
@@ -168,6 +197,7 @@ services:
         NEXT_PUBLIC_ADMIN_API_BASE_URL: http://localhost:8001/api/admin
         # Client Keycloak du back-office (rôle ops requis), même realm que web-pay.
         NEXT_PUBLIC_ADMIN_OIDC_CLIENT_ID: web-ops
+        NEXT_PUBLIC_BIOMETRICS_API_BASE_URL: http://localhost:8004/api/biometrics
     ports: ["127.0.0.1:3000:3000"]
     depends_on:
       - payment-api
