@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from payment_api import crypto, service
 from payment_api.db import get_session
 from payment_api.domain.rules import PaymentError, TransferRequest
+from payment_api.models import INITIATED_BY_PROBER, INITIATED_BY_USER
 from payment_api.repo import accounts as accounts_repo
 from payment_api.repo import transactions as tx_repo
 from payment_api.schemas import Beneficiary, ErrorResponse, Payment, PublicKey, TransferEnvelope
@@ -59,6 +60,9 @@ async def create_transfer(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     claims: Claims = Depends(require_role("client", "prober")),
 ) -> Payment:
+    # Origine de l'opération : le rôle realm du jeton, et non l'UUID du compte émetteur.
+    # Seule cette couche voit les rôles, d'où la décision prise ici et passée en aval.
+    initiated_by = INITIATED_BY_PROBER if INITIATED_BY_PROBER in claims.roles else INITIATED_BY_USER
     start = time.perf_counter()
     try:
         # Les coordonnées en clair ne vivent que dans ce bloc et ne sont jamais journalisées.
@@ -68,7 +72,12 @@ async def create_transfer(
         beneficiary = Beneficiary.parse(plaintext)
         req = TransferRequest(beneficiary.iban, beneficiary.bic, body.amount)
         tx, created = await service.transfer(
-            session, idempotency_key, claims.sub, req, request.app.state.pseudonymizer
+            session,
+            idempotency_key,
+            claims.sub,
+            req,
+            request.app.state.pseudonymizer,
+            initiated_by,
         )
     except PaymentError as exc:
         PAYMENTS.labels(exc.code).inc()

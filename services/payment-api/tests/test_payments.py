@@ -449,3 +449,48 @@ async def test_health_and_metrics(client, auth, envelope):
     metrics = (await client.get("/metrics")).text
     assert 'payments_total{status="completed"}' in metrics
     assert "payment_duration_seconds_bucket" in metrics
+
+
+# --- Origine de l'opération --------------------------------------------------------
+
+
+async def origin_of(db, tx_id: str) -> str | None:
+    async with db() as s:
+        return await s.scalar(
+            select(Transaction.initiated_by).where(Transaction.id == uuid.UUID(tx_id))
+        )
+
+
+@pytest.mark.parametrize(
+    ("user", "roles", "dst", "expected"),
+    [
+        ("alice", None, "bob", "user"),
+        ("prober", None, "probe_sink", "prober"),
+        # UUID de la sonde mais rôle client : c'est le rôle qui décide, pas l'UUID.
+        ("prober", ("client",), "probe_sink", "user"),
+    ],
+    ids=["client", "prober", "role-not-uuid"],
+)
+async def test_transfer_records_origin_from_token_role(
+    client, auth, envelope, db, user, roles, dst, expected
+):
+    r = await client.post(
+        TRANSFER, json=envelope(iban_of(dst), "0.01"), headers=auth(user, roles) | key()
+    )
+    assert r.status_code == 201
+    assert await origin_of(db, r.json()["id"]) == expected
+
+
+async def test_replay_keeps_the_origin_of_creation(client, auth, envelope, db):
+    idem = key()
+    r1 = await client.post(
+        TRANSFER, json=envelope(iban_of("probe_sink"), "0.01"), headers=auth("prober") | idem
+    )
+    # Même émetteur, même requête, même clé, mais jeton au rôle client : c'est un rejeu.
+    r2 = await client.post(
+        TRANSFER,
+        json=envelope(iban_of("probe_sink"), "0.01"),
+        headers=auth("prober", ("client",)) | idem,
+    )
+    assert (r1.status_code, r2.status_code) == (201, 200)
+    assert await origin_of(db, r1.json()["id"]) == "prober"

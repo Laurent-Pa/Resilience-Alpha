@@ -22,7 +22,16 @@ from resilience_common.logging import propagation_headers
 log = structlog.get_logger()
 
 STAGES = ("token", "key", "payment")
+# Fenêtre glissante des derniers résultats : sert `/status` et `probe_success_ratio`.
+RESULTS_WINDOW = 60
 PROBE_SUCCESS = Gauge("probe_success", "1 si la dernière sonde a réussi")
+PROBE_SUCCESS_RATIO = Gauge(
+    "probe_success_ratio",
+    f"Part des sondes réussies parmi les {RESULTS_WINDOW} dernières, entre 0 et 1",
+)
+# NaN tant qu'aucune sonde n'a tourné : un 0 par défaut se lirait comme une panne totale
+# pendant les premières secondes qui suivent chaque redémarrage.
+PROBE_SUCCESS_RATIO.set(float("nan"))
 PROBE_LATENCY = Histogram("probe_latency_seconds", "Durée d'une sonde complète")
 PROBE_FAILURES = Counter("probe_failures_total", "Sondes en échec", ["stage"])
 for _stage in STAGES:
@@ -35,7 +44,7 @@ class Prober:
     def __init__(self, settings: Settings, client: httpx.AsyncClient) -> None:
         self.settings = settings
         self.client = client
-        self.results: deque[dict] = deque(maxlen=60)
+        self.results: deque[dict] = deque(maxlen=RESULTS_WINDOW)
         self._token: str | None = None
         self._token_exp = 0.0
         self._public_key: str | None = None
@@ -117,6 +126,9 @@ class Prober:
         }
         self.results.append(result)
         PROBE_SUCCESS.set(1 if ok else 0)
+        # Calculé ici pour que Grafana le trace tel quel (accord avec l'infra : aucun
+        # calcul côté dashboard), sur la même fenêtre que `/status`.
+        PROBE_SUCCESS_RATIO.set(sum(r["ok"] for r in self.results) / len(self.results))
         PROBE_LATENCY.observe(latency)
         if not ok:
             PROBE_FAILURES.labels(stage).inc()

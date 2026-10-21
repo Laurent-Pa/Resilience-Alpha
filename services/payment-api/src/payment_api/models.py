@@ -24,6 +24,16 @@ SCHEMA = "payments"
 STATUS_COMPLETED = "COMPLETED"
 STATUS_REJECTED = "REJECTED"
 
+# Origine d'une opération. Déduite du rôle realm porté par le jeton, et non de l'UUID du
+# compte émetteur : le jour où une seconde sonde apparaît, elle est classée correctement
+# sans toucher au code. Sert à écarter le trafic synthétique de la vue admin.
+INITIATED_BY_USER = "user"
+INITIATED_BY_PROBER = "prober"
+# À garder aligné avec la contrainte CHECK de `Transaction`. Permet d'exprimer « toutes
+# les origines sauf X » en égalités : un `!=` sur la colonne de tête de
+# `ix_transactions_initiated_created` ne sait pas utiliser l'index.
+INITIATED_BY_VALUES = (INITIATED_BY_USER, INITIATED_BY_PROBER)
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -52,7 +62,11 @@ class Transaction(Base):
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_transactions_amount_positive"),
         CheckConstraint("status IN ('COMPLETED','REJECTED')", name="ck_transactions_status"),
+        CheckConstraint("initiated_by IN ('user','prober')", name="ck_transactions_initiated_by"),
         Index("ix_transactions_owner_created", "owner_id", "created_at"),
+        # La sonde écrit ~12 lignes/min et domine vite la table : sans cet index, écarter
+        # son trafic obligerait à la parcourir pour servir une page de la vue admin.
+        Index("ix_transactions_initiated_created", "initiated_by", "created_at"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -64,6 +78,11 @@ class Transaction(Base):
     dst_iban_masked: Mapped[str] = mapped_column(Text)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))  # euros, 2 décimales
     status: Mapped[str] = mapped_column(Text)
+    # `server_default` ne couvre que les lignes antérieures à la migration 0002 ;
+    # l'application renseigne toujours la valeur explicitement.
+    initiated_by: Mapped[str] = mapped_column(
+        Text, default=INITIATED_BY_USER, server_default=INITIATED_BY_USER
+    )
     request_hash: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

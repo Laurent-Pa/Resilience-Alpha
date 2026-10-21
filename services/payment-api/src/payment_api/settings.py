@@ -1,4 +1,4 @@
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from sqlalchemy import URL
 
 from resilience_common.settings import ServiceSettings
@@ -31,6 +31,11 @@ class Settings(ServiceSettings):
     rsa_private_key: SecretStr | None = None
 
     seed_on_start: bool = True
+
+    # Cadence nominale de la sonde (s). À garder égale à INTERVAL_S du service prober :
+    # payment-api ne voit que les virements réussis, donc le nombre attendu par minute
+    # (dénominateur du taux de réussite) ne peut venir que de cette valeur.
+    prober_interval_s: float = Field(default=5.0, gt=0)
 
     def db_url(self) -> URL | str:
         if self.database_url:

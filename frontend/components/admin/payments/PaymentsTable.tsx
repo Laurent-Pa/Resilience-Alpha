@@ -22,8 +22,9 @@ export function PaymentsTable({ items }: PaymentsTableProps) {
       </div>
       {items.map((item) => (
         <div key={item.id} className={`${ROW_SHELL} ${GRID_TEMPLATE} bg-[var(--ra-background)]`}>
-          <span className="min-w-0 text-center text-sm text-[var(--ra-foreground)]">
+          <span className="flex min-w-0 items-center justify-center gap-2 text-center text-sm text-[var(--ra-foreground)]">
             {formatDate(item.created_at)}
+            {item.initiated_by === "prober" && <ProberTag />}
           </span>
           <span className="min-w-0 text-center text-sm text-[var(--ra-foreground)]">
             {formatEuros(item.amount)}
@@ -35,6 +36,18 @@ export function PaymentsTable({ items }: PaymentsTableProps) {
         </div>
       ))}
     </div>
+  );
+}
+
+/** Neutre exprès : une opération de sonde n'est ni une anomalie ni un succès métier. */
+function ProberTag() {
+  return (
+    <span
+      title="Opération générée par la sonde de supervision"
+      className="rounded-full border border-[var(--ra-border-primary)] px-2 py-0.5 text-[10px] font-medium text-[var(--ra-input-text)]"
+    >
+      sonde
+    </span>
   );
 }
 

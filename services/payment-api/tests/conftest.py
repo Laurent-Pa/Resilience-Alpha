@@ -45,6 +45,12 @@ def settings(pg_url, jwks) -> Settings:
         oidc_issuer=ISSUER,
         oidc_jwks_url=jwks.url,
         iban_hmac_key="test-hmac-key-0123456789abcdef",
+        # Le défaut de 2 s est un choix de production : échouer vite quand le pool est
+        # saturé. `test_50_concurrent_crossed_transfers` le sature délibérément — ses 50
+        # virements portent sur les deux mêmes comptes, donc ils se sérialisent sur les
+        # mêmes verrous de ligne pendant que les suivants attendent une connexion. Le pool
+        # étant partagé par toute la session de tests, la marge se réduit en fin de suite.
+        db_pool_timeout_s=10.0,
     )
     run_migrations(s)
     return s
