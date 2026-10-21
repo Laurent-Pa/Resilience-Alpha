@@ -1,0 +1,235 @@
+# =====================================================================================
+# PC Hôte — configuration de démo (proche de la prod). Le dev rapide reste compose.dev.yaml.
+#
+#   docker compose up -d --build        (fichier lu par défaut : compose.yaml)
+#   docker compose ps / logs <service> / down
+#
+# Variables : .env à la racine (PUBLIC_HOST), cf. .env.example. Secrets : .secrets/ (README).
+# Contrat de chaque service : docs/prod-interface.md. Construction pas à pas : README,
+# section « Déploiement sur le PC Hôte ».
+#
+# Règles :
+#  - aucun `ports:` sauf le WAF (127.0.0.1:8443, relayé par le proxy L4 Windows qui tient
+#    le 443 public, cf. edge/) ; tout le reste circule sur des réseaux internes ;
+#  - les URL PUBLIQUES (émetteur Keycloak, WAF) passent par https://${PUBLIC_HOST} ;
+#    les appels de service à service restent internes (keycloak:8080, prober:8000, postgres) ;
+#  - restart: unless-stopped partout : la plateforme doit survivre à la panne d'un service.
+# =====================================================================================
+
+# Projet distinct de compose.dev.yaml : conteneurs, volumes et réseaux séparés.
+name: resilience-host
+
+x-restart: &restart
+  restart: unless-stopped
+
+secrets:
+  db_password:
+    file: ./.secrets/db_password
+  iban_hmac_key:
+    file: ./.secrets/iban_hmac_key
+  rsa_private_key:
+    file: ./.secrets/rsa_private_key
+  prober_client_secret:
+    file: ./.secrets/prober_client_secret
+  remediation_client_secret:
+    file: ./.secrets/remediation_client_secret
+  webhook_hmac_key:
+    file: ./.secrets/webhook_hmac_key
+
+services:
+  # -----------------------------------------------------------------------------------
+  # WAF : SEUL service publié. nginx + ModSecurity + OWASP CRS, TLS avec le certificat de
+  # labo (étape 1). Routage et en-têtes : waf/nginx/default.conf.template.
+  # -----------------------------------------------------------------------------------
+  waf:
+    <<: *restart
+    # Tag "roulant" pour le premier essai ; le figer ensuite (voir README, étape 3).
+    image: owasp/modsecurity-crs:nginx-alpine
+    container_name: ra-waf
+    environment:
+      # DetectionOnly : CRS journalise sans bloquer, le temps de vérifier l'absence de faux
+      # positifs sur les parcours réels (paiement, login Keycloak, admin). Puis On.
+      MODSEC_RULE_ENGINE: DetectionOnly
+      BLOCKING_PARANOIA: "1"
+    volumes:
+      - ./waf/nginx/default.conf.template:/etc/nginx/templates/conf.d/default.conf.template:ro
+      # Exclusions CRS justifiées (faux positifs observés), chargées après les règles.
+      - ./waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:/etc/modsecurity.d/owasp-crs/rules/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:ro
+      - ./certs/waf.crt:/etc/nginx/certs/waf.crt:ro
+      - ./certs/waf.key:/etc/nginx/certs/waf.key:ro
+    # Publié UNIQUEMENT sur la boucle locale du PC Hôte : le 443 public est tenu par le
+    # proxy L4 Windows (edge/nginx.conf, scripts/edge-proxy.ps1) qui ajoute l'IP réelle
+    # du client (PROXY protocol). Docker Desktop, seul, la remplacerait par sa passerelle.
+    ports: ["127.0.0.1:8443:8443"]
+    healthcheck:
+      # Le 8443 exige l'en-tête PROXY : la sonde passe par le serveur HTTP interne (8080).
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks: [edge]
+
+  # -----------------------------------------------------------------------------------
+  # Base de données métier (payments) et journal du moteur (remediation)
+  # -----------------------------------------------------------------------------------
+  postgres:
+    <<: *restart
+    image: postgres:16-alpine
+    container_name: ra-postgres
+    environment:
+      POSTGRES_DB: resilience
+      POSTGRES_USER: payment_app
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_app -d resilience"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+    networks: [backend]
+
+  # -----------------------------------------------------------------------------------
+  # Keycloak : derrière le WAF, en HTTP interne. TLS terminé au WAF (comme en prod).
+  # -----------------------------------------------------------------------------------
+  keycloak:
+    <<: *restart
+    image: quay.io/keycloak/keycloak:26.8.0
+    container_name: ra-keycloak
+    command: ["start", "--import-realm"]
+    # Bootstrap admin + valeurs des ${...} du realm (PROBER_CLIENT_SECRET, ...).
+    env_file: ./.secrets/keycloak.env
+    environment:
+      KC_HTTP_RELATIVE_PATH: /auth
+      # Émetteur PUBLIC figé pour tous les jetons, y compris ceux obtenus en interne
+      # (prober, moteur) : pas de KC_HOSTNAME_BACKCHANNEL_DYNAMIC (DEPLOIEMENT-PROD.md §1, §4).
+      KC_HOSTNAME: https://${PUBLIC_HOST:?PUBLIC_HOST absent de .env}/auth
+      # HTTP derrière le WAF ; Keycloak lit X-Forwarded-* pour le schéma et l'hôte d'origine.
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      # Résout ${PUBLIC_HOST:192.168.137.1} dans le realm (redirectUris de web-pay et web-ops)
+      # à l'import. Le realm n'est importé que s'il n'existe pas : base H2 interne au
+      # conteneur, donc à chaque recréation du conteneur.
+      PUBLIC_HOST: ${PUBLIC_HOST}
+    volumes:
+      - ./keycloak/realm-resilience.json:/opt/keycloak/data/import/realm-resilience.json:ro
+    healthcheck:
+      # Pas de curl dans l'image : requête HTTP brute en bash sur l'interface de gestion.
+      # Deux chemins essayés (avec et sans /auth) selon la version de Keycloak.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          for p in /auth/health/ready /health/ready; do
+          exec 3<>/dev/tcp/127.0.0.1/9000 || exit 1;
+          printf "GET $$p HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3;
+          grep -q '"UP"' <&3 && exit 0;
+          done; exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [backend, edge]
+
+  # -----------------------------------------------------------------------------------
+  # Services du pilier dev
+  # -----------------------------------------------------------------------------------
+  payment-api:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: services/payment-api/Dockerfile
+    container_name: ra-payment-api
+    environment:
+      LOG_LEVEL: INFO
+      DB_HOST: postgres
+      OIDC_ISSUER: https://${PUBLIC_HOST}/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      # Le front est servi par le WAF sur la même origine : CORS ne sert qu'en filet.
+      CORS_ORIGINS: '["https://${PUBLIC_HOST}"]'
+    secrets: [db_password, iban_hmac_key, rsa_private_key]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, edge]
+
+  # Front Next.js (paiement sous /, back-office sous /admin), servi par le WAF.
+  # Les NEXT_PUBLIC_* sont FIGÉES dans le bundle au build : tout changement de PUBLIC_HOST
+  # impose `docker compose build frontend`. API en chemins relatifs (même origine que le WAF).
+  # Chaque argument doit être fourni : le Dockerfile poserait sinon une chaîne vide, qui
+  # n'active pas les valeurs par défaut du code (`??`).
+  frontend:
+    <<: *restart
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: /api/payments
+        NEXT_PUBLIC_ADMIN_API_BASE_URL: /api/admin
+        NEXT_PUBLIC_OIDC_AUTHORITY: https://${PUBLIC_HOST}/auth/realms/resilience
+        NEXT_PUBLIC_ADMIN_OIDC_CLIENT_ID: web-ops
+    container_name: ra-frontend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks: [edge]
+
+  # Sonde : jeton en interne, virement de preuve VIA LE WAF comme un vrai client.
+  prober:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: services/prober/Dockerfile
+    container_name: ra-prober
+    environment:
+      LOG_LEVEL: INFO
+      KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
+      TARGET_URL: https://${PUBLIC_HOST}
+      CA_BUNDLE: /certs/lab-ca.pem
+    secrets: [prober_client_secret]
+    volumes:
+      - ./certs/lab-ca.pem:/certs/lab-ca.pem:ro
+    # edge : non interne, nécessaire pour joindre le WAF sur l'adresse publique du PC Hôte.
+    networks: [backend, edge]
+
+  # Moteur de remédiation. EXECUTOR=fake jusqu'à l'étape 6 (playbooks + docker-socket-proxy).
+  remediation-engine:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: services/remediation-engine/Dockerfile
+    container_name: ra-remediation-engine
+    environment:
+      LOG_LEVEL: INFO
+      OIDC_ISSUER: https://${PUBLIC_HOST}/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      EXECUTOR: fake
+      VERIFIER: real
+      PROBER_STATUS_URL: http://prober:8000/status
+      LEDGER_URL: https://${PUBLIC_HOST}/api/admin/ledger/check
+      CA_BUNDLE: /certs/lab-ca.pem
+      KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
+      DB_HOST: postgres
+    secrets: [webhook_hmac_key, remediation_client_secret, db_password]
+    volumes:
+      - ./certs/lab-ca.pem:/certs/lab-ca.pem:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, edge]
+
+volumes:
+  pg_data:
+
+networks:
+  # Données et appels internes (postgres, keycloak:8080, prober:8000). Sans accès sortant.
+  backend:
+    internal: true
+  # Ce que le WAF sert (étape 3) + accès à l'adresse publique pour le prober et le moteur.
+  edge: {}

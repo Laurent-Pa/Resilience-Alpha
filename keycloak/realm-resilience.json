@@ -24,13 +24,13 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "rootUrl": "https://192.168.137.1",
+      "rootUrl": "https://${PUBLIC_HOST:192.168.137.1}",
       "baseUrl": "/",
-      "redirectUris": ["https://192.168.137.1/*", "http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+      "redirectUris": ["https://${PUBLIC_HOST:192.168.137.1}/*", "http://localhost:3000/*", "http://127.0.0.1:3000/*"],
       "webOrigins": ["+"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://192.168.137.1/*##http://localhost:3000/*##http://127.0.0.1:3000/*"
+        "post.logout.redirect.uris": "https://${PUBLIC_HOST:192.168.137.1}/*##http://localhost:3000/*##http://127.0.0.1:3000/*"
       },
       "protocolMappers": [
         {
@@ -50,13 +50,13 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "rootUrl": "https://192.168.137.1",
-      "baseUrl": "/ops/",
-      "redirectUris": ["https://192.168.137.1/ops/*", "http://localhost:5174/*", "http://localhost:3000/admin/*"],
+      "rootUrl": "https://${PUBLIC_HOST:192.168.137.1}",
+      "baseUrl": "/admin/",
+      "redirectUris": ["https://${PUBLIC_HOST:192.168.137.1}/admin/*", "http://localhost:3000/admin/*"],
       "webOrigins": ["+"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://192.168.137.1/ops/*##http://localhost:5174/*##http://localhost:3000/admin/*"
+        "post.logout.redirect.uris": "https://${PUBLIC_HOST:192.168.137.1}/admin/*##http://localhost:3000/admin/*"
       },
       "protocolMappers": [
         {

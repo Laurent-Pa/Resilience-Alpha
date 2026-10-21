@@ -1,7 +1,7 @@
 # Cibles de développement. Sous Windows sans `make`, lancer les commandes à la main.
 UV ?= uv
 
-.PHONY: sync test test-common test-payment test-prober lint fmt export-openapi check-openapi seed dev-up dev-down
+.PHONY: sync test test-common test-payment test-prober lint fmt export-openapi check-openapi seed dev-up dev-down host-up host-down
 
 sync:
 	$(UV) sync --all-packages
@@ -42,3 +42,9 @@ dev-up:
 
 dev-down:
 	docker compose -f compose.dev.yaml down
+
+host-up:
+	docker compose up -d --build
+
+host-down:
+	docker compose down

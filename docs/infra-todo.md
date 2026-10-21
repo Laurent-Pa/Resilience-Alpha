@@ -147,6 +147,7 @@ Sans ce secret côté moteur, l'authentification par jeton est désactivée (seu
 - Mécanisme de blocage d'IP pilotable par `block_ip.yml` (liste de refus + rechargement), idempotent.
 - `/api/remediation/events` est un flux **SSE** : désactiver le buffering (`proxy_buffering off` sous nginx), timeout de lecture ≥ 60 s ; le jeton passe en query → **ne pas journaliser la query string** de cette route.
 - Fournir le **bundle CA** du certificat de labo, monté dans le prober et le moteur (`CA_BUNDLE`).
+- ⚠️ **IP source et Docker Desktop (21/10)** : un WAF publié directement voit toutes les connexions venir de la passerelle Docker (`172.x`), donc `X-Forwarded-For` serait faux pour tout le monde. Retenu : un proxy L4 nginx pour Windows sur le 443 de l'hôte, qui transmet l'IP réelle au WAF par PROXY protocol, avec le WAF publié sur `127.0.0.1:8443` seulement. Détails et alternatives écartées : [decision-proxy-l4-ip-source.md](decision-proxy-l4-ip-source.md). Implémenté dans `compose.yaml`, `waf/`, `edge/`.
 
 ---
 
