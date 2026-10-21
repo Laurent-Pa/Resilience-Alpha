@@ -17,6 +17,11 @@
   --ra-status-warning-text: #c2410c;
   --ra-status-warning-bg: #fff1e8;
 
+  /* Série unique des graphiques. Bleu volontairement neutre : ni la marque ni un statut,
+     pour qu'une courbe de taux de réussite ne se lise pas « tout va bien » par sa
+     couleur. Validé contre le fond blanc (luminosité, chroma, contraste >= 3:1). */
+  --ra-chart-series: #2a78d6;
+
   --ra-sidebar-width: 224px;
   --ra-navbar-height: 64px;
   --ra-user-menu-width: 192px;
