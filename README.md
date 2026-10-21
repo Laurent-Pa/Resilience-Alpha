@@ -579,7 +579,14 @@ Service `waf` : image `owasp/modsecurity-crs` (nginx + ModSecurity v3 + OWASP CR
 - **Journal d'accès JSON** sur stdout, avec `src_ip` et `trace_id`. Le chemin est journalisé **sans la query string** (le jeton du flux SSE y passe).
 - **Résolution DNS à la requête** : le WAF démarre même si un service est arrêté, et suit un conteneur recréé par la remédiation.
 - **ModSecurity en `DetectionOnly`** à cette étape : les règles CRS journalisent sans bloquer, le temps de vérifier l'absence de faux positifs. Passage en `On` une fois les parcours réels validés (étape 4).
-- **Exclusions CRS** : [`waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf`](waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf), une justification par règle. À ce jour : `920350` (Host = adresse IP), inévitable puisque le sujet impose `192.168.137.1` sans nom DNS.
+- **Exclusions CRS**, une justification par règle, toutes dues au fait que le point d'accès public est une **adresse IP** (imposée par le sujet, sans nom DNS) :
+  - [`waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf`](waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf) (globales) : `920350`, en-tête Host numérique, sur 100 % du trafic ;
+  - [`waf/modsecurity/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`](waf/modsecurity/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf) (ciblées) : `931100`, RFI par URL contenant une IP, retirée **uniquement** pour `redirect_uri` / `post_logout_redirect_uri` sur les routes OIDC de Keycloak, et pour `iss` sur `/callback` et `/admin/callback` (retour de Keycloak, RFC 9207). Elle bloquait toute connexion.
+- Pour identifier le paramètre en cause d'un blocage, lire le champ `data` du journal d'audit (`found within ARGS:<nom>`) :
+
+  ```bash
+  docker compose logs --since 15m waf | grep '"transaction"' | grep '"http_code":403' | grep -o '"uri":"[^"]*"\|"ruleId":"[0-9]*"\|"data":"[^"]*"'
+  ```
 - **Deux journaux dans `docker compose logs waf`** : l'accès nginx (`"service":"waf"`, une ligne par requête) et l'audit ModSecurity (`"transaction":...`, seulement quand une règle se déclenche).
 
 #### Proxy L4 Windows : conserver l'IP réelle du client
@@ -696,6 +703,25 @@ docker compose logs --since 15m waf | grep '"transaction"' | grep -o '"ruleId":"
 `949110` / `980170` sont les règles d'évaluation du score ; les `941xxx` viennent du test XSS de l'étape 3 s'il a été rejoué. **Toute autre règle sur un parcours légitime est un faux positif** à analyser avant le passage en `On` (exclusion justifiée dans `waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf`).
 
 **Passage de ModSecurity en blocage** : dans `compose.yaml`, service `waf`, `MODSEC_RULE_ENGINE: "On"`, puis `docker compose up -d waf` ; rejouer les parcours 1 à 3 et le test XSS de l'étape 3, qui doit maintenant répondre `403`.
+
+Résultat de la recette du 21/10 (en `DetectionOnly`) : parcours 1 et 2 réussis (virement `alice` → `bob`, visible dans le back-office `operator`). Seul faux positif relevé : `931100` sur les URL contenant l'IP publique dans le flux OIDC (score 5 = blocage) : d'abord sur `redirect_uri` / `post_logout_redirect_uri`, puis, après passage en `On`, sur `iss` au retour `/callback` (403 après déconnexion). Les deux sont traités par les exclusions ciblées ci-dessus. ModSecurity est depuis en **`On`**.
+
+Après passage en `On` :
+
+```bash
+docker compose up -d waf
+# XSS : désormais bloqué
+curl -s -o /dev/null -w "%{http_code}\n" --ssl-no-revoke "https://$PUBLIC_HOST/api/payments/public-key?q=%3Cscript%3Ealert(1)%3C/script%3E"   # 403
+# Requête légitime : toujours servie
+curl -s -o /dev/null -w "%{http_code}\n" --ssl-no-revoke "https://$PUBLIC_HOST/api/payments/public-key"                                     # 200
+docker compose logs prober --tail=2                                                                                                           # "ok": true
+```
+
+Puis rejouer les parcours 1 à 3 dans le navigateur, et vérifier qu'aucune règle ne s'est déclenchée en dehors du test XSS :
+
+```bash
+docker compose logs --since 10m waf | grep '"transaction"' | grep -o '"ruleId":"[0-9]*"' | sort | uniq -c
+```
 
 ## Pièges connus
 

@@ -47,13 +47,16 @@ services:
     image: owasp/modsecurity-crs:nginx-alpine
     container_name: ra-waf
     environment:
-      # DetectionOnly : CRS journalise sans bloquer, le temps de vérifier l'absence de faux
-      # positifs sur les parcours réels (paiement, login Keycloak, admin). Puis On.
-      MODSEC_RULE_ENGINE: DetectionOnly
+      # Blocage actif depuis la recette du 21/10 (parcours paiement, login, admin validés
+      # en DetectionOnly ; faux positifs traités dans waf/modsecurity/). Pour diagnostiquer
+      # un blocage suspect, repasser temporairement en DetectionOnly.
+      MODSEC_RULE_ENGINE: "On"
       BLOCKING_PARANOIA: "1"
     volumes:
       - ./waf/nginx/default.conf.template:/etc/nginx/templates/conf.d/default.conf.template:ro
-      # Exclusions CRS justifiées (faux positifs observés), chargées après les règles.
+      # Exclusions CRS justifiées (faux positifs observés) : ciblées avant les règles,
+      # globales après.
+      - ./waf/modsecurity/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf:/etc/modsecurity.d/owasp-crs/rules/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf:ro
       - ./waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:/etc/modsecurity.d/owasp-crs/rules/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:ro
       - ./certs/waf.crt:/etc/nginx/certs/waf.crt:ro
       - ./certs/waf.key:/etc/nginx/certs/waf.key:ro
