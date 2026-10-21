@@ -8,9 +8,128 @@ Ce dépôt couvre le **pilier développement** (payment-api, frontend, lib parta
 
 ```
 resilience-alpha/
+├── compose.dev.yaml
+├── contracts
+│   └── openapi-payment.json
+├── DEPLOIEMENT-PROD.md
+├── frontend
+│   ├── AGENTS.md
+│   ├── app
+│   │   ├── admin
+│   │   ├── callback
+│   │   ├── login
+│   │   ├── payment
+│   │   │   └── page.tsx
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── payment
+│   │       └── page.tsx
+│   ├── components
+│   │   ├── admin
+│   │   └── public
+│   ├── Dockerfile
+│   ├── eslint.config.mjs
+│   ├── lib
+│   │   ├── crypto.test.ts
+│   │   ├── crypto.ts
+│   │   ├── format.ts
+│   │   └── payments.ts
+│   ├── next.config.ts
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── README.md
+│   └── tsconfig.json
+├── grafana
+│   └── provisioning
+│       └── datasources
+│           └── datasources.yml
+├── keycloak
+│   ├── certs
+│   │   ├── keycloak.crt
+│   │   ├── keycloak.key
+│   │   └── keycloak.pfx
+│   └── realm-resilience.json
+├── libs
+│   └── common
+│       ├── pyproject.toml
+│       ├── src
+│       │   └── resilience_common
+│       │       ├── auth.py
+│       │       ├── crypto.py
+│       │       ├── health.py
+│       │       ├── hmac.py
+│       │       ├── __init__.py
+│       │       ├── logging.py
+│       │       ├── metrics.py
+│       │       ├── settings.py
+│       │       └── testing.py
+│       └── tests
+│           ├── test_auth.py
+│           ├── test_hmac.py
+│           └── test_observability.py
+├── loki
+│   └── loki-config.yml
+├── Makefile
+├── prometheus
+│   └── prometheus.yml
+├── pyproject.toml
 ├── README.md
-├── Makefile                       # cibles dev : sync, test, lint, export-openapi, seed, dev-up, dev-down
-├── pyproject.toml                 # racine du workspace uv
+├── services
+│   ├── payment-api
+│   │   ├── alembic.ini
+│   │   ├── Dockerfile
+│   │   ├── migrations
+│   │   │   ├── env.py
+│   │   │   ├── script.py.mako
+│   │   │   └── versions
+│   │   │       └── 0001_initial.py
+│   │   ├── pyproject.toml
+│   │   ├── src
+│   │   │   └── payment_api
+│   │   │       ├── api
+│   │   │       │   ├── accounts.py
+│   │   │       │   ├── admin.py
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── payments.py
+│   │   │       ├── bootstrap.py
+│   │   │       ├── crypto.py
+│   │   │       ├── db.py
+│   │   │       ├── domain
+│   │   │       │   ├── bic.py
+│   │   │       │   ├── iban.py
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── rules.py
+│   │   │       ├── export_openapi.py
+│   │   │       ├── __init__.py
+│   │   │       ├── main.py
+│   │   │       ├── models.py
+│   │   │       ├── repo
+│   │   │       │   ├── accounts.py
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── ledger.py
+│   │   │       │   └── transactions.py
+│   │   │       ├── schemas.py
+│   │   │       ├── seed.py
+│   │   │       ├── service.py
+│   │   │       └── settings.py
+│   │   └── tests
+│   │       ├── conftest.py
+│   │       ├── test_crypto.py
+│   │       ├── test_payments.py
+│   │       └── test_rules.py
+│   └── prober
+│       ├── Dockerfile
+│       ├── pyproject.toml
+│       ├── src
+│       │   └── prober
+│       │       ├── __init__.py
+│       │       ├── main.py
+│       │       ├── probe.py
+│       │       └── settings.py
+│       └── tests
+│           └── test_probe.py
 ├── uv.lock
 ├── compose.dev.yaml                # stack de dev locale : postgres + payment-api
 ├── .secrets/                       # secrets locaux non commités (voir compose.dev.yaml)
@@ -99,6 +218,7 @@ openssl rand -hex 16 | tr -d '\n' > .secrets/grafana_admin_password
 openssl rand -hex 32 > .secrets/prober_client_secret
 openssl rand -hex 32 > .secrets/remediation_client_secret
 openssl rand -base64 24 > .secrets/test_users_password
+openssl rand -hex 32 | tr -d '\n' > .secrets/webhook_hmac_key
 ```
 
 **Variante PowerShell** (Windows), à lancer depuis la racine du dépôt. Elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
@@ -152,7 +272,19 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_p
 - `rsa_private_key` est recommandé pour la démo/le dev continu : sans lui, une clé RSA éphémère est générée à chaque redémarrage, ce qui invalide la clé publique mise en cache côté frontend (le frontend et le prober s'en remettent via un retry sur `decryption_failed`, mais c'est à éviter en usage courant).
 - **Ne jamais régénérer `iban_hmac_key` sur une base existante** : les comptes deviennent introuvables par IBAN.
 
-### 2. Lancer la stack (Postgres + payment-api + frontend + keycloak + prober + remediation)
+Keycloak sert en HTTPS sur `:8443` ; générer son certificat auto-signé (dossier `keycloak/certs/`, gitignoré comme `.secrets/`) :
+
+```bash
+./keycloak/generate-keycloak-cert.sh
+```
+
+Le driver de logs `loki` (utilisé par `prober` et `frontend` dans `compose.dev.yaml`) nécessite un plugin Docker, à installer une fois par machine :
+
+```bash
+docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
+```
+
+### 2. Lancer la stack (Postgres + payment-api + frontend + keycloak + prober + observabilité)
 
 ```bash
 docker compose -f compose.dev.yaml up -d --build
@@ -164,37 +296,27 @@ Ou via le Makefile (hors Windows sans `make`, lancer la commande Docker directem
 make dev-up
 ```
 
-`payment-api` écoute en local sur `127.0.0.1:8001` (mappé vers le port interne `8000`). Au démarrage : migrations Alembic puis seed des comptes fictifs (`alice`, `bob`, `carol`, `PROBE`, `PROBE_SINK`, `bank_reserve`).
-
-### Observabilité (Prometheus, Loki, Grafana)
-
-```bash
-# Installer le plugin loki
-docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
-
-# Depuis la racine du dépôt
-docker compose -f observability/docker-compose.observability.yml up -d
-
-# Changer le mot de passe admin Grafana (il n'est lu dans le secret qu'à la création du volume)
-docker exec grafana grafana cli admin reset-admin-password TestPassword123
-```
+`payment-api` écoute en local sur `127.0.0.1:8001` (mappé vers le port interne `8000`). Au démarrage : migrations Alembic puis seed des comptes fictifs (`alice`, `bob`, `carol`, `PROBE`, `PROBE_SINK`, `bank_reserve`). Prometheus, Loki et Grafana sont des services de ce même `compose.dev.yaml`, pas une stack séparée.
 
 Vérifier que tout est démarré :
 
 ```bash
 docker compose -f compose.dev.yaml ps
-docker compose -f observability/docker-compose.observability.yml ps
 docker compose -f compose.dev.yaml logs payment-api --tail=50
+```
+
+Changer le mot de passe admin Grafana (il n'est lu dans le secret qu'à la création du volume) :
+
+```bash
+docker exec grafana grafana cli admin reset-admin-password TestPassword123
 ```
 
 Arrêt :
 
 ```bash
-docker compose -f observability/docker-compose.observability.yml down   # si l'observabilité tourne
-docker compose -f compose.dev.yaml down                                 # ou : make dev-down
+docker compose -f compose.dev.yaml down
+# ou : make dev-down
 ```
-
-Les deux stacks partagent le réseau `resilience-alpha_monitoring` : le premier `down` signale qu'il ne peut pas le supprimer (`has active endpoints`), c'est normal, le second le supprime. Ne jamais ajouter `--remove-orphans` : il supprimerait les conteneurs de l'autre stack.
 
 ### 3. Variables d'environnement utiles (backend)
 
@@ -346,7 +468,303 @@ docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilien
 docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience
 ```
 
-Voir [observability/README.md](observability/README.md) pour les détails.
+## Déploiement sur le PC Hôte (configuration de démo, proche de la prod)
+
+`compose.dev.yaml` reste l'environnement de développement rapide. Cette section monte la plateforme **telle qu'elle sera présentée au jury** : un seul point d'entrée publié (le WAF, en HTTPS), tout le reste sur des réseaux Docker internes, actions de remédiation réelles. Références : [`docs/prod-interface.md`](docs/prod-interface.md) (contrat de chaque service), [`docs/infra-todo.md`](docs/infra-todo.md), [`DEPLOIEMENT-PROD.md`](DEPLOIEMENT-PROD.md).
+
+```
+Navigateur / PC Attaquant ──HTTPS :443──▶ proxy L4 Windows (hors Docker, ajoute l'IP réelle : PROXY protocol)
+                                               └──▶ WAF (conteneur, publié sur 127.0.0.1:8443 uniquement)
+                                                      ├─ /              → frontend (paiement + /admin)
+                                                      ├─ /api/payments, /api/accounts, /api/admin → payment-api
+                                                      ├─ /api/remediation/* → remediation-engine (préfixe retiré)
+                                                      └─ /auth          → keycloak (HTTP interne)
+Réseaux internes : postgres, vault, prometheus/loki/grafana/alertmanager, docker-socket-proxy
+```
+
+Avancement :
+
+- [x] Étape 1 — Adresse publique et PKI de labo
+- [x] Étape 2 — `compose.yaml` : services internes, sans port publié
+- [x] Étape 3 — WAF (routage, en-têtes, TLS)
+- [x] Étape 4 — Frontend et Keycloak en URL publiques
+- [ ] Étape 5 — Observabilité et Alertmanager
+- [ ] Étape 6 — Remédiation réelle (docker-socket-proxy + playbooks Ansible)
+- [ ] Étape 7 — Vault
+- [ ] Étape 8 — Détection, attaque depuis le PC Attaquant, recette
+
+### Étape 1 — Adresse publique et PKI de labo
+
+**Adresse publique (`PUBLIC_HOST`)**. C'est l'adresse que tapent le navigateur et le PC Attaquant ; elle fixe l'émetteur des jetons Keycloak, les URL du frontend et le certificat du WAF. Le jour de la démo : `192.168.137.1`, qui n'existe que lorsque le **point d'accès sans fil mobile** Windows est activé (Paramètres → Réseau et Internet → Point d'accès sans fil mobile). Sans point d'accès, utiliser l'IPv4 de la carte réseau du PC (`ipconfig`), **jamais `localhost`** : dans un conteneur, `localhost` désigne le conteneur lui-même.
+
+```bash
+cp .env.example .env          # puis ajuster PUBLIC_HOST si besoin
+ipconfig                      # (PowerShell / cmd) vérifier que l'adresse existe bien sur le PC
+```
+
+**PKI de labo**. Une CA locale signe le certificat du WAF. On importe la CA une seule fois dans Windows (plus d'avertissement navigateur), et le prober et le moteur la reçoivent en `CA_BUNDLE` (vérification TLS réelle, jamais `verify=False`). Si `PUBLIC_HOST` change, relancer le script : seul le certificat du WAF est régénéré, la CA déjà importée reste valable.
+
+```bash
+bash scripts/gen-lab-pki.sh   # Git Bash ; crée certs/lab-ca.pem, certs/lab-ca.key, certs/waf.crt, certs/waf.key
+```
+
+Importer la CA dans le magasin de l'utilisateur Windows (PowerShell, depuis la racine du dépôt ; Windows demande confirmation) :
+
+```powershell
+Import-Certificate -FilePath .\certs\lab-ca.pem -CertStoreLocation Cert:\CurrentUser\Root
+Get-ChildItem Cert:\CurrentUser\Root | Where-Object Subject -like "*Resilience-Alpha*"
+```
+
+Chrome et Edge utilisent ce magasin. Firefox a le sien : `about:config` → `security.enterprise_roots.enabled` = `true`.
+
+- `certs/` est gitignoré. **`certs/lab-ca.key` ne quitte jamais le PC Hôte** : qui la possède peut signer un certificat accepté par tous les postes qui ont importé la CA.
+- Le PC Attaquant peut recevoir `certs/lab-ca.pem` (jamais la clé) pour `scripts/flood.py --ca lab-ca.pem` ; à défaut, `--insecure`.
+
+### Étape 2 — `compose.yaml` : services internes, sans port publié
+
+`compose.yaml` (lu par défaut par `docker compose`, sans `-f`) est un **projet distinct** (`name: resilience-host`) : conteneurs `ra-*`, volume Postgres et réseaux séparés de ceux de `compose.dev.yaml`. Arrêter la pile de dev avant, la RAM du PC Hôte ne suffit pas pour les deux.
+
+| Réseau | Type | Qui |
+| --- | --- | --- |
+| `backend` | interne (aucun accès sortant) | postgres, keycloak, payment-api, prober, remediation-engine |
+| `edge` | bridge | ce que le WAF servira (keycloak, payment-api, moteur) + prober et moteur, qui joignent le WAF par l'adresse publique |
+
+- **Aucun port publié** à cette étape : rien n'est joignable depuis le navigateur avant le WAF (étape 3). Postgres n'est que sur `backend`.
+- **Keycloak** : `start` (mode prod), HTTP interne derrière le WAF (`KC_PROXY_HEADERS=xforwarded`), émetteur figé à `https://${PUBLIC_HOST}/auth`. Base H2 interne au conteneur : le realm est réimporté au démarrage (choix assumé pour la RAM ; un Postgres dédié serait la cible industrielle).
+- **Services** : émetteur OIDC public, JWKS et jetons en interne, `CA_BUNDLE=/certs/lab-ca.pem` pour le prober et le moteur, moteur en `EXECUTOR=fake` jusqu'à l'étape 6.
+
+**Secret manquant** : `webhook_hmac_key` (HMAC partagé entre `detection` et le moteur). Si `.secrets/webhook_hmac_key` est un **dossier**, c'est Docker qui l'a créé en montant un fichier absent : le supprimer d'abord.
+
+```bash
+rmdir .secrets/webhook_hmac_key 2>/dev/null
+openssl rand -hex 32 | tr -d '\n' > .secrets/webhook_hmac_key
+```
+
+Démarrage :
+
+```bash
+docker compose -f compose.dev.yaml down     # libérer la RAM
+docker compose up -d --build
+docker compose ps                           # tout en "healthy", colonne PORTS vide
+```
+
+Vérifications (à faire avant l'étape 3, elles valident le câblage interne) :
+
+```bash
+# 1. payment-api prêt (migrations 0001 + 0002 jouées sur une base neuve, seed fait)
+docker compose exec payment-api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health/ready').read().decode())"
+
+# 2. Piège iss : l'émetteur annoncé EN INTERNE doit être l'adresse PUBLIQUE
+docker compose exec prober python -c "import urllib.request, json; print(json.load(urllib.request.urlopen('http://keycloak:8080/auth/realms/resilience/.well-known/openid-configuration'))['issuer'])"
+
+# 3. Sonde : jeton OK, échec attendu à l'étape "key" (ConnectError) tant que le WAF n'existe pas
+docker compose logs prober --tail=3
+```
+
+Résultats attendus : (1) `{"status":"ok","checks":{"db":"ok"}}` ; (2) `https://<PUBLIC_HOST>/auth/realms/resilience` ; (3) des `probe.result` avec `"stage": "key"` et `"error": "ConnectError"`. Un échec au stage `token` signalerait un problème Keycloak ou de `prober_client_secret`.
+
+### Étape 3 — WAF (routage, en-têtes, TLS)
+
+Service `waf` : image `owasp/modsecurity-crs` (nginx + ModSecurity v3 + OWASP CRS), **seul conteneur publié**, et seulement sur `127.0.0.1:8443` (nginx non-root). Le 443 public est tenu par le proxy L4 Windows décrit plus bas. Configuration : [`waf/nginx/default.conf.template`](waf/nginx/default.conf.template).
+
+| Chemin public | Vers | Remarque |
+| --- | --- | --- |
+| `/api/payments`, `/api/accounts`, `/api/admin` | payment-api:8000 | sans réécriture |
+| `/api/remediation/*` | remediation-engine:8000 | préfixe retiré ; `/events` (SSE) sans tampon ni inspection |
+| `/auth` | keycloak:8080 | `/auth/admin` refusé (403) : console d'administration non exposée |
+| `/` | frontend:3000 | `502` tant que le frontend n'est pas déployé (étape 4) |
+| `/api/remediation/alerts`, `/metrics`, `/health` | — | `404` : entrées internes jamais publiées |
+
+- **En-têtes posés par le WAF** : `X-Forwarded-For` / `X-Real-IP` = l'IP de connexion, **en écrasant** ce que le client envoie (sinon un attaquant ferait bloquer l'IP de son choix par `block_ip`) ; `X-Request-ID` (devient le `trace_id` des services, renvoyé aussi au client) ; `X-Forwarded-Proto/Host/Port` pour Keycloak.
+- **Journal d'accès JSON** sur stdout, avec `src_ip` et `trace_id`. Le chemin est journalisé **sans la query string** (le jeton du flux SSE y passe).
+- **Résolution DNS à la requête** : le WAF démarre même si un service est arrêté, et suit un conteneur recréé par la remédiation.
+- **ModSecurity en `DetectionOnly`** à cette étape : les règles CRS journalisent sans bloquer, le temps de vérifier l'absence de faux positifs. Passage en `On` une fois les parcours réels validés (étape 4).
+- **Exclusions CRS**, une justification par règle, toutes dues au fait que le point d'accès public est une **adresse IP** (imposée par le sujet, sans nom DNS) :
+  - [`waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf`](waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf) (globales) : `920350`, en-tête Host numérique, sur 100 % du trafic ;
+  - [`waf/modsecurity/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`](waf/modsecurity/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf) (ciblées) : `931100`, RFI par URL contenant une IP, retirée **uniquement** pour `redirect_uri` / `post_logout_redirect_uri` sur les routes OIDC de Keycloak, et pour `iss` sur `/callback` et `/admin/callback` (retour de Keycloak, RFC 9207). Elle bloquait toute connexion.
+- Pour identifier le paramètre en cause d'un blocage, lire le champ `data` du journal d'audit (`found within ARGS:<nom>`) :
+
+  ```bash
+  docker compose logs --since 15m waf | grep '"transaction"' | grep '"http_code":403' | grep -o '"uri":"[^"]*"\|"ruleId":"[0-9]*"\|"data":"[^"]*"'
+  ```
+- **Deux journaux dans `docker compose logs waf`** : l'accès nginx (`"service":"waf"`, une ligne par requête) et l'audit ModSecurity (`"transaction":...`, seulement quand une règle se déclenche).
+
+#### Proxy L4 Windows : conserver l'IP réelle du client
+
+Décision complète (constat, alternatives écartées, conséquences, arguments pour le jury) : [`docs/decision-proxy-l4-ip-source.md`](docs/decision-proxy-l4-ip-source.md).
+
+**Problème constaté** : Docker Desktop remplace l'IP du client par la passerelle du réseau Docker (`172.x`) sur tout port publié ; un téléphone du réseau apparaissait en `172.19.0.1`. Ni le mode « host networking » de Docker Desktop ni le réseau WSL « mirrored » n'y changent rien. Sans IP réelle, la détection par IP et `block_ip` ne peuvent pas viser le PC Attaquant (et bloqueraient la passerelle, donc tout le monde).
+
+**Solution** : nginx pour Windows, lancé **sur l'hôte**, écoute le 443, ne déchiffre rien et relaie le flux TLS vers `127.0.0.1:8443` en le précédant d'un en-tête *PROXY protocol* qui porte l'IP d'origine ([`edge/nginx.conf`](edge/nginx.conf)). Le WAF l'exige (`listen ... proxy_protocol`) et en fait son `$remote_addr` (`real_ip_header proxy_protocol`) : journal, ModSecurity, `X-Forwarded-For` et `block_ip` voient l'IP réelle. Une connexion directe au WAF sans cet en-tête est refusée, et le port n'est publié que sur la boucle locale : impossible de contourner le relais depuis le réseau.
+
+Installation (une fois) : télécharger sur [nginx.org/en/download.html](https://nginx.org/en/download.html) le zip **Stable version** pour Windows et le décompresser de façon à obtenir `tools\nginx\nginx.exe` (dossier `tools/` gitignoré). Vérifier que le module stream est présent :
+
+```powershell
+.\tools\nginx\nginx.exe -V 2>&1 | Select-String -- "--with-stream"
+```
+
+Pilotage (PowerShell, à la racine ; `-ExecutionPolicy Bypass` si l'exécution de scripts est désactivée) :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\edge-proxy.ps1 start    # test de la conf puis démarrage
+powershell -ExecutionPolicy Bypass -File .\scripts\edge-proxy.ps1 status
+powershell -ExecutionPolicy Bypass -File .\scripts\edge-proxy.ps1 stop
+```
+
+- Au premier démarrage, le pare-feu Windows demande d'autoriser `nginx.exe` : cocher les réseaux **privés et publics** (le point d'accès mobile peut être classé public).
+- **Le jour J, démarrer le relais en plus de `docker compose up -d`** : sans lui, plus rien n'est joignable sur le 443.
+- Limite connue : nginx pour Windows plafonne à ~1024 connexions simultanées. Sous un flood massif, le relais peut saturer avant le WAF ; le blocage d'IP au WAF libère les connexions de l'attaquant au fil de l'eau.
+- Journaux du relais : `edge\logs\error.log` (gitignoré).
+
+Port 443 occupé : `netstat -ano | findstr :443` pour trouver le programme.
+
+```bash
+docker compose up -d
+docker compose ps waf                      # "healthy", PORTS 127.0.0.1:8443->8443/tcp
+PUBLIC_HOST=$(grep -E '^PUBLIC_HOST=' .env | cut -d= -f2 | tr -d '\r')
+```
+
+Vérifications (Git Bash) :
+
+```bash
+# 1. payment-api via le WAF, certificat vérifié avec la CA de labo
+curl --cacert certs/lab-ca.pem https://$PUBLIC_HOST/api/payments/public-key
+
+# 2. Keycloak via le WAF : même émetteur qu'en interne
+curl -s --cacert certs/lab-ca.pem https://$PUBLIC_HOST/auth/realms/resilience/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+
+# 3. La sonde passe désormais de bout en bout : "ok": true, "stage": "payment"
+docker compose logs prober --tail=3
+
+# 4. Entrées internes non publiées : 404 puis 403
+curl -s -o /dev/null -w "%{http_code}\n" --cacert certs/lab-ca.pem https://$PUBLIC_HOST/api/remediation/alerts
+curl -s -o /dev/null -w "%{http_code}\n" --cacert certs/lab-ca.pem https://$PUBLIC_HOST/auth/admin/
+
+# 5. ModSecurity détecte (sans bloquer) une injection XSS : 200, puis une trace de règle CRS
+curl -s -o /dev/null -w "%{http_code}\n" --cacert certs/lab-ca.pem "https://$PUBLIC_HOST/api/payments/public-key?q=%3Cscript%3Ealert(1)%3C/script%3E"
+docker compose logs waf | grep -i "modsecurity" | tail -2
+```
+
+Si `curl` refuse `--cacert` (curl de Windows, moteur TLS « schannel »), remplacer `--cacert certs/lab-ca.pem` par `--ssl-no-revoke` (sans chemin de certificat) : schannel s'appuie sur le magasin Windows où la CA a été importée.
+
+6. **Navigateur** : `https://<PUBLIC_HOST>/auth/realms/resilience/account` doit afficher la page de compte Keycloak **avec le cadenas, sans avertissement** (CA importée) et sans jamais rediriger vers `localhost` ou `http://`.
+
+7. **IP source réelle (indispensable pour la démo)** : depuis un autre appareil du même réseau (téléphone en Wi-Fi), ouvrir `https://<PUBLIC_HOST>/api/payments/public-key` (accepter l'avertissement de certificat sur le téléphone), puis :
+
+```bash
+docker compose logs waf | grep '"service":"waf"' | grep public-key | tail -3
+```
+
+Sur iPhone, Safari affiche « Ce site n'est pas sûr » (la CA de labo n'est pas installée) : « Afficher les détails » → « visiter ce site web ». Tant que l'avertissement n'est pas franchi, aucune requête HTTP n'est envoyée, donc rien dans le journal. `src_ip` doit être l'IP **du téléphone** (`192.168.x.y` du réseau local). Une adresse en `172.x` ou `192.168.65.x` signifie que la requête n'est pas passée par le relais Windows (relais arrêté, ou port publié autrement que sur `127.0.0.1`).
+
+**Figer l'image** une fois l'étape validée (le tag `nginx-alpine` est roulant) :
+
+```bash
+docker image inspect owasp/modsecurity-crs:nginx-alpine --format '{{index .RepoDigests 0}}'
+```
+
+puis remplacer `image:` du service `waf` par la valeur obtenue (`owasp/modsecurity-crs@sha256:...`).
+
+Résultat validé le 21/10 : sonde en `201` de bout en bout via relais + WAF ; un iPhone du réseau journalisé avec son IP réelle (`192.168.1.61`) ; le PC Hôte lui-même apparaît sous sa propre IP (`192.168.1.156`), comme la sonde (elle sort de Docker et revient par l'adresse publique). Conséquence pour l'étape 6 : `block_ip` doit refuser l'IP du PC Hôte.
+
+### Étape 4 — Frontend et Keycloak en URL publiques
+
+**Frontend** (service `frontend`, réseau `edge`, aucun port) : servi par le WAF sous `/` (paiement) et `/admin` (back-office). Les variables `NEXT_PUBLIC_*` sont **figées dans le bundle au build** :
+
+| Argument de build | Valeur | Pourquoi |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_BASE_URL` | `/api/payments` | relatif : même origine que le WAF, pas de CORS |
+| `NEXT_PUBLIC_ADMIN_API_BASE_URL` | `/api/admin` | idem |
+| `NEXT_PUBLIC_OIDC_AUTHORITY` | `https://${PUBLIC_HOST}/auth/realms/resilience` | émetteur public, identique à `KC_HOSTNAME` |
+| `NEXT_PUBLIC_ADMIN_OIDC_CLIENT_ID` | `web-ops` | client du back-office (rôle `ops`) |
+
+Tous les arguments doivent être fournis : sinon le Dockerfile pose une chaîne vide, qui ne déclenche pas les valeurs par défaut du code (`??`). **Changer `PUBLIC_HOST` impose de reconstruire le frontend** (`docker compose build frontend`).
+
+**Keycloak** : les `redirectUris` / `rootUrl` des clients `web-pay` et `web-ops` utilisent `https://${PUBLIC_HOST:192.168.137.1}` dans [`keycloak/realm-resilience.json`](keycloak/realm-resilience.json), résolu à l'import depuis la variable `PUBLIC_HOST` du conteneur (valeur par défaut `192.168.137.1`, donc `compose.dev.yaml` est inchangé). Le back-office est sous `/admin` (l'ancien chemin `/ops` et `localhost:5174` du realm ne correspondaient à aucune application). Le realm n'est importé que s'il n'existe pas : comme sa base H2 vit dans le conteneur, il faut **recréer** Keycloak après toute modification du realm (`docker compose up -d --force-recreate keycloak`).
+
+```bash
+docker compose up -d --build              # construit le frontend, recrée Keycloak (nouvelle variable)
+docker compose ps                         # tout "healthy"
+cat .secrets/test_users_password; echo    # mot de passe des comptes de test
+```
+
+**Recette des parcours réels**, ModSecurity encore en `DetectionOnly` (navigateur du PC, `https://<PUBLIC_HOST>/`) :
+
+1. Paiement : se connecter avec `alice` → virement vers `bob` → confirmation `201`. IBAN de `bob` : `docker compose exec payment-api python -c "from payment_api.seed import seed_iban; print(seed_iban('bob'))"`.
+2. Back-office : `https://<PUBLIC_HOST>/admin` → connexion `operator` → liste des paiements (bascule « opérations de la sonde ») → onglet Monitoring (taux de réussite de la sonde).
+3. Déconnexion des deux côtés : retour sur la page de connexion, jamais vers `localhost` ni `http://`.
+
+Puis relever les règles CRS déclenchées **par ces parcours** (journal d'audit ModSecurity des 15 dernières minutes) :
+
+```bash
+docker compose logs --since 15m waf | grep '"transaction"' | grep -o '"ruleId":"[0-9]*"' | sort | uniq -c
+```
+
+`949110` / `980170` sont les règles d'évaluation du score ; les `941xxx` viennent du test XSS de l'étape 3 s'il a été rejoué. **Toute autre règle sur un parcours légitime est un faux positif** à analyser avant le passage en `On` (exclusion justifiée dans `waf/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf`).
+
+**Passage de ModSecurity en blocage** : dans `compose.yaml`, service `waf`, `MODSEC_RULE_ENGINE: "On"`, puis `docker compose up -d waf` ; rejouer les parcours 1 à 3 et le test XSS de l'étape 3, qui doit maintenant répondre `403`.
+
+Résultat de la recette du 21/10 (en `DetectionOnly`) : parcours 1 et 2 réussis (virement `alice` → `bob`, visible dans le back-office `operator`). Seul faux positif relevé : `931100` sur les URL contenant l'IP publique dans le flux OIDC (score 5 = blocage) : d'abord sur `redirect_uri` / `post_logout_redirect_uri`, puis, après passage en `On`, sur `iss` au retour `/callback` (403 après déconnexion). Les deux sont traités par les exclusions ciblées ci-dessus. ModSecurity est depuis en **`On`**.
+
+Après passage en `On` :
+
+```bash
+docker compose up -d waf
+# XSS : désormais bloqué
+curl -s -o /dev/null -w "%{http_code}\n" --ssl-no-revoke "https://$PUBLIC_HOST/api/payments/public-key?q=%3Cscript%3Ealert(1)%3C/script%3E"   # 403
+# Requête légitime : toujours servie
+curl -s -o /dev/null -w "%{http_code}\n" --ssl-no-revoke "https://$PUBLIC_HOST/api/payments/public-key"                                     # 200
+docker compose logs prober --tail=2                                                                                                           # "ok": true
+```
+
+Puis rejouer les parcours 1 à 3 dans le navigateur, et vérifier qu'aucune règle ne s'est déclenchée en dehors du test XSS :
+
+```bash
+docker compose logs --since 10m waf | grep '"transaction"' | grep -o '"ruleId":"[0-9]*"' | sort | uniq -c
+```
+
+Validé le 21/10 en `On` : parcours `alice` (virement, déconnexion, reconnexion) et `operator` (paiements, bascule de la sonde, Monitoring, déconnexion, reconnexion) sans aucun 403. Le test XSS répond `403`.
+
+### Passation — reprise à l'étape 5 (état au 21/10 au soir)
+
+**Ce qui tourne et a été validé** : étapes 1 à 4. La plateforme est joignable uniquement en `https://<PUBLIC_HOST>/` via le relais Windows et le WAF ModSecurity (en blocage). Le paiement, le back-office et le Monitoring fonctionnent, la sonde fait des virements `201` toutes les 5 s, et le WAF voit l'IP réelle des clients. **Ce qui reste** : étapes 5 à 8, détaillées dans [`docs/infra-todo.md`](docs/infra-todo.md) (contrat de chaque service : [`docs/prod-interface.md`](docs/prod-interface.md)).
+
+| Étape | Pilier | À faire | Détail |
+| --- | --- | --- | --- |
+| 5 — Observabilité + Alertmanager | infra | Prometheus / Loki / Grafana dans `compose.yaml` **sans port publié** ; règles d'alerte aux noms exacts attendus par le moteur ; Alertmanager → `POST /alerts` avec le secret `alertmanager_token` | `infra-todo.md` §3, §8 |
+| 6 — Remédiation réelle | infra (+ cyber pour le blocage au WAF) | docker-socket-proxy ; `block_ip.yml`, `recycle_service.yml`, `kill_db_conns.yml` ; liste de refus au WAF ; moteur en `EXECUTOR=ansible` | `infra-todo.md` §1, §2, §4, §5 |
+| 7 — Vault | cyber | certificat, initialisation et descellement ; corriger `vault/init-secrets.sh` (voir ci-dessous) | `infra-todo.md` §6 |
+| 8 — Détection + attaque | IA + cyber | réentraîner `detection/` sur le trafic du PC Hôte ; attaque `scripts/flood.py` depuis le PC Attaquant ; recette | `infra-todo.md` §7, §9 |
+
+**Démarrer la plateforme** (chaque session, et le jour J) :
+
+```bash
+# 0. Le jour J seulement : point d'accès mobile activé, PUBLIC_HOST=192.168.137.1 dans .env.
+#    Si PUBLIC_HOST a changé depuis le dernier build :
+#      bash scripts/gen-lab-pki.sh && docker compose build frontend && docker compose up -d --force-recreate keycloak
+docker compose -f compose.dev.yaml down     # jamais les deux piles en même temps (RAM)
+docker compose up -d
+docker compose ps                           # tout "healthy"
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\edge-proxy.ps1 start   # sans lui, rien ne répond sur le 443
+```
+
+**Pour tester sur un autre PC que celui de Laurent** : refaire l'étape 1 (`.env` avec **son** `PUBLIC_HOST`, `gen-lab-pki.sh`, import de la CA), créer les secrets (`.secrets/`, y compris `webhook_hmac_key` en **fichier**), décompresser nginx pour Windows dans `tools\nginx\`. La CA et les certificats sont propres à chaque machine (`certs/` est gitignoré).
+
+**Pièges connus pour la suite** (constatés ou anticipés en montant les étapes 1 à 4) :
+
+1. **Relais Windows** : il doit être démarré (`edge-proxy.ps1 status`). Le WAF n'est publié que sur `127.0.0.1:8443` et refuse les connexions sans en-tête PROXY : un test direct sur `127.0.0.1:8443` échoue, c'est voulu.
+2. **`block_ip` ne doit jamais bloquer l'IP du PC Hôte** (`PUBLIC_HOST`). La sonde et le navigateur local apparaissent sous cette IP : la bloquer couperait la preuve de reprise. Le loopback est déjà refusé par le moteur ; l'IP de l'hôte doit l'être par le playbook (en variable, elle change entre le réseau de travail et la démo).
+3. **Le driver de logs `loki` tourne dans le moteur Docker**, pas dans un conteneur : si Loki n'est publié nulle part, les logs n'arrivent pas. Publier Loki sur `127.0.0.1:3100` **uniquement**, ou collecter avec Promtail/Alloy. Plugin à installer sur l'hôte (commande dans la section « Démarrage » plus haut).
+4. **Réseaux** : `backend` est interne. Prometheus doit rejoindre les réseaux des services qu'il scrape, ou ceux-ci rejoindre `monitoring`. Métriques Keycloak : port de gestion **9000**.
+5. **Noms de conteneurs fixes** pour les playbooks : `ra-payment-api`, `ra-keycloak`, `ra-postgres`, `ra-waf`, `ra-prober`, `ra-frontend`, `ra-remediation-engine`.
+6. **Keycloak** : ne pas activer `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` (401 `Invalid issuer`) ; garder `KC_HTTP_ENABLED=true` (sinon `keycloak:8080` est fermé : 503 `jwks_unavailable` côté payment-api). Après une modification du realm : `docker compose up -d --force-recreate keycloak` (le realm n'est réimporté que dans un conteneur neuf).
+7. **ModSecurity en blocage** : un 403 inattendu sur un parcours légitime se diagnostique avec la commande de l'étape 3 (champ `data` = paramètre en cause), puis une exclusion **ciblée et justifiée** dans `waf/modsecurity/`. Ne pas repasser le WAF en `DetectionOnly` pour « faire passer » la démo.
+8. **Secrets sous forme de dossier** : si Docker monte un secret dont le fichier n'existe pas, il crée un **dossier** à sa place (c'est arrivé avec `webhook_hmac_key`). Créer chaque fichier de `.secrets/` **avant** le premier `up`, et vérifier avec `ls -la .secrets/`.
+9. **Vault (étape 7)** : `vault/certs/` est vide (gitignoré). `vault/generate-vault-cert.sh` utilise `-subj "/CN=vault"`, que Git Bash réécrit en chemin Windows : le lancer avec `MSYS_NO_PATHCONV=1 bash vault/generate-vault-cert.sh`. Le healthcheck `wget` actuel échoue tant que Vault est scellé (`503`) ou non initialisé (`501`) ; piste : `vault status -tls-skip-verify` (code 2 = scellé mais vivant, 1 = erreur). Dans `init-secrets.sh` : le moteur KV `secret/` n'existe pas en mode serveur (`vault secrets enable -path=secret kv-v2` d'abord) ; `/opt/.secrets` n'est pas monté (le script stocke silencieusement `placeholder`) ; `VAULT_ADDRESS` n'est pas une variable Vault (`VAULT_ADDR`). Aucun service ne lit Vault aujourd'hui : les secrets passent par les Docker secrets de `.secrets/`.
+10. **Détection (étape 8)** : le modèle a été entraîné sur le trafic du dev local. Il faut le **réentraîner sur le trafic normal du PC Hôte** (10 à 15 min, `detection/README.md`), sinon faux positifs ou non-détection. Depuis le PC Attaquant : `scripts/flood.py --ca lab-ca.pem` (copie de `certs/lab-ca.pem`, **jamais** la clé) ou `--insecure`.
 
 ## Pièges connus
 

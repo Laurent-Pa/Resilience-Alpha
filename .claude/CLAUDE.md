@@ -265,7 +265,8 @@ def decode(token, audience):
     return Claims(sub=UUID(p["sub"]), roles=set(p.get("realm_access", {}).get("roles", [])))
 ```
 
-Côté Keycloak (configuré par l'infra) : `KC_HOSTNAME=https://192.168.137.1/auth`, `KC_HTTP_RELATIVE_PATH=/auth`, `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, `KC_HEALTH_ENABLED=true`, `KC_METRICS_ENABLED=true`, logs JSON.
+Côté Keycloak (configuré par l'infra) : `KC_HOSTNAME=https://192.168.137.1/auth`, `KC_HTTP_RELATIVE_PATH=/auth`, `KC_HEALTH_ENABLED=true`, `KC_METRICS_ENABLED=true`, logs JSON.
+**Pas** de `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` : il rend l'`iss` des jetons internes non public → 401 `Invalid issuer` (vérifié ; cf. `DEPLOIEMENT-PROD.md` §1, §4).
 
 **Le JWKS en cache est un choix de résilience** : pendant une panne de Keycloak, les jetons déjà émis restent valides et payment-api continue de servir.
 
@@ -683,7 +684,7 @@ Composants Card, Badge, StatusDot (`ok`/`degraded`/`down`), Table, Button, Spinn
 
 - `useEventStream` reconnecte automatiquement. À chaque (re)connexion, il recharge `/incidents` pour combler les événements manqués.
 - Servi sous `/ops` derrière le WAF.
-
+ *(21/10 : le back-office réellement livré est l'application `frontend/` sous `/admin`, client `web-ops` ; `/ops` n'est pas routé.)*
 ---
 
 ## 11. Interfaces avec les autres piliers (à confirmer, sans bloquer)
@@ -711,6 +712,7 @@ Chaque étape se termine par des tests verts et un commit. **Ne pas passer à l'
 > - **Remédiation (étape 5)** : `services/remediation-engine/` **fait** — machine d'états, classifier, politique (`playbook_map.yaml`), orchestrateur (dédoublonnage, retries, cooldown, flapping), verifier, bus SSE, API `/alerts` (HMAC) + `/incidents` + `/stats` + `/events`, FakeExecutor/FakeVerifier, `scripts/fake_alert.py`. **15 tests verts + ruff.** Fonctionnement et étapes de test (dev/prod) : voir §9. Store en mémoire (persistance Postgres repoussée à l'étape 7).
 > - **uv / build (21/10)** : `uv.lock` régénéré (inclut remediation-engine), Dockerfiles en `uv sync --frozen` → **builds reproductibles**. uv **jamais** sur l'hôte (embarqué dans l'image) ; la prod n'a besoin que de Docker, uv n'est requis que côté dev pour le lock. `pythonpath` pytest pour lancer les tests sans réinstaller. Cf. §4.
 > - **Étape 7 (code) faite** : AnsibleExecutor, Verifier réel (jeton ops + ledger), persistance Postgres + reprise. `compose.dev.yaml` : moteur en `EXECUTOR=fake` + `VERIFIER=real` + Postgres. **Reste à l'infra** : playbooks (contrat dans `docs/prod-interface.md` §3), docker-socket-proxy, WAF (`/api/remediation` avec réécriture), Alertmanager signé.
+> - **PC Hôte (21/10 soir)** : `compose.yaml` (projet `resilience-host`, conteneurs `ra-*`) monte la plateforme en conditions de démo : `PUBLIC_HOST` dans `.env`, PKI de labo (`scripts/gen-lab-pki.sh`, CA = `CA_BUNDLE`), Keycloak en mode `start` derrière le WAF, WAF nginx + ModSecurity/CRS **en blocage** (`waf/`, exclusions 920350 et 931100 ciblées et justifiées), relais L4 Windows + PROXY protocol pour l'IP réelle des clients (`edge/`, `docs/decision-proxy-l4-ip-source.md`), front + back-office validés en recette. **Reste** : étapes 5 à 8 du README (observabilité + Alertmanager, playbooks + docker-socket-proxy, Vault, détection sur site) ; pièges listés dans la note de passation du README.
 
 ### Étape 0 — Squelette (lundi)
 
