@@ -7,6 +7,9 @@
 #   echo <secret du client prober dans Keycloak> > .secrets/prober_client_secret
 # Keycloak lit ses secrets depuis ./.secrets/keycloak.env (PROBER_CLIENT_SECRET,
 # REMEDIATION_CLIENT_SECRET, TEST_USERS_PASSWORD, KC_BOOTSTRAP_ADMIN_*).
+# Keycloak sert en HTTPS (:8443) : générer un certificat auto-signé avec
+#   ./keycloak/generate-keycloak-cert.sh
+# avant le premier `make dev-up` (dossier ./keycloak/certs/ gitignoré, comme ./vault/certs/).
 
 secrets:
   db_password:
@@ -35,9 +38,16 @@ services:
       # car payment-api a OIDC_JWKS_URL en dur et n'utilise pas le discovery.
       # Le /auth doit être DANS KC_HOSTNAME : en KC26 l'iss dérive de KC_HOSTNAME sans y
       # réappliquer KC_HTTP_RELATIVE_PATH. Cohérent avec la prod (KC_HOSTNAME=.../auth, §6).
+      # endpoint en HTTP interne (keycloak:8080, jamais exposé à l'hôte).
+      KC_HTTP_ENABLED: "true"
       KC_HOSTNAME: https://localhost:8443/auth
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
+      # Certificat auto-signé généré par ./keycloak/generate-keycloak-cert.sh (gitignoré,
+      # comme ./vault/certs). Sans ces deux variables, `start` (mode non-dev) ne trouve pas
+      # de configuration TLS et le conteneur ne démarre pas.
+      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/keycloak.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
       - ./keycloak/certs:/opt/keycloak/certs
@@ -67,8 +77,9 @@ services:
     environment:
       DB_HOST: postgres
       LOG_LEVEL: INFO
-      # En dev, l'hôte "public" est localhost:8080 (pas de WAF). Le JWKS reste interne (§6).
-      OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
+      # En dev, l'hôte "public" est localhost:8443 en HTTPS (pas de WAF), aligné sur
+      # KC_HOSTNAME du service keycloak. Le JWKS reste interne (§6).
+      OIDC_ISSUER: https://localhost:8443/auth/realms/resilience
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
       # localhost et 127.0.0.1 sont deux origines distinctes pour le navigateur (Docker Desktop ouvre 127.0.0.1).
       CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
@@ -107,7 +118,7 @@ services:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_BASE_URL: http://localhost:8001/api/payments
-        NEXT_PUBLIC_OIDC_AUTHORITY: http://localhost:8080/auth/realms/resilience
+        NEXT_PUBLIC_OIDC_AUTHORITY: https://localhost:8443/auth/realms/resilience
         NEXT_PUBLIC_ADMIN_API_BASE_URL: http://localhost:8001/api/admin
         # Client Keycloak du back-office (rôle ops requis), même realm que web-pay.
         NEXT_PUBLIC_ADMIN_OIDC_CLIENT_ID: web-ops

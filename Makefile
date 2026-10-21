@@ -1,7 +1,7 @@
 # Cibles de développement. Sous Windows sans `make`, lancer les commandes à la main.
 UV ?= uv
 
-.PHONY: sync test test-common test-payment test-prober lint fmt export-openapi check-openapi gen-types seed dev-up dev-down
+.PHONY: sync test test-common test-payment test-prober lint fmt export-openapi check-openapi seed dev-up dev-down
 
 sync:
 	$(UV) sync --all-packages
@@ -33,8 +33,6 @@ export-openapi:
 check-openapi: export-openapi
 	git diff --exit-code -- contracts/
 
-gen-types:
-	cd web && pnpm --filter @ra/api-client gen
 
 seed:
 	$(UV) run --package payment-api python -m payment_api.bootstrap

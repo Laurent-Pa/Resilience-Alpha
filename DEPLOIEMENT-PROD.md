@@ -12,10 +12,10 @@ telle quelle : reprendre les images et les variables, mais appliquer tous les po
 
 | Sujet | Dev (actuel) | Prod |
 | --- | --- | --- |
-| Commande | `start-dev --import-realm` | `start --optimized --import-realm` (ou import par kcadm), **jamais `start-dev`** |
+| Commande | `start --import-realm` (déjà en mode non-dev localement) | `start --optimized --import-realm` (ou import par kcadm) |
 | Base | H2 interne au conteneur (volontairement jetable) | Postgres dédié et persistant, séparé de celui de payment-api |
-| `KC_HOSTNAME` | `http://localhost:8080/auth` | `https://192.168.137.1/auth` (**le `/auth` doit y figurer**, sinon l'`iss` perd ce segment — voir §4) |
-| TLS | HTTP en clair | HTTPS, terminé au WAF ; `KC_PROXY_HEADERS=xforwarded` |
+| `KC_HOSTNAME` | `https://localhost:8443/auth` | `https://192.168.137.1/auth` (**le `/auth` doit y figurer**, sinon l'`iss` perd ce segment — voir §4) |
+| TLS | HTTPS auto-signé, terminé par Keycloak lui-même (cert généré par `keycloak/generate-keycloak-cert.sh`, voir `KC_HTTPS_CERTIFICATE_FILE`/`KC_HTTPS_CERTIFICATE_KEY_FILE`) | HTTPS, terminé au WAF ; `KC_PROXY_HEADERS=xforwarded` |
 | Admin | `KC_BOOTSTRAP_ADMIN_*` en clair dans `keycloak.env` | identifiants admin forts, fournis par Vault, **rotation après le 1er boot** |
 | Divers | — | `KC_HEALTH_ENABLED=true`, `KC_METRICS_ENABLED=true`, logs JSON |
 
@@ -86,7 +86,7 @@ le réseau interne* et vérifier que son `iss` vaut l'émetteur **public** (avec
 
 ## 5. payment-api / prober / remediation-engine
 
-- **`OIDC_ISSUER`** : passer de `http://localhost:8080/auth/...` (dev) à l'URL publique (§4).
+- **`OIDC_ISSUER`** : passer de `https://localhost:8443/auth/...` (dev) à l'URL publique (§4).
 - **prober** : `TARGET_URL = https://192.168.137.1` (via le WAF, plus `http://payment-api:8000`) ;
   `CA_BUNDLE` renseigné ; `KC_TOKEN_URL` interne ; `PROBE_DST_IBAN` = IBAN de `PROBE_SINK`.
 - **remediation-engine** : `EXECUTOR=ansible` (dev = `fake`) ; monter les playbooks de l'infra dans
