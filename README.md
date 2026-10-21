@@ -15,12 +15,20 @@ resilience-alpha/
 ├── frontend
 │   ├── AGENTS.md
 │   ├── app
+│   │   ├── admin
+│   │   ├── callback
+│   │   ├── login
+│   │   ├── payment
+│   │   │   └── page.tsx
 │   │   ├── favicon.ico
 │   │   ├── globals.css
 │   │   ├── layout.tsx
 │   │   ├── page.tsx
 │   │   └── payment
 │   │       └── page.tsx
+│   ├── components
+│   │   ├── admin
+│   │   └── public
 │   ├── Dockerfile
 │   ├── eslint.config.mjs
 │   ├── lib
@@ -131,6 +139,52 @@ resilience-alpha/
     ├── generate-vault-cert.sh
     ├── init-response.json
     └── init-secrets.sh      
+├── compose.dev.yaml                # stack de dev locale : postgres + payment-api
+├── .secrets/                       # secrets locaux non commités (voir compose.dev.yaml)
+├── contracts/
+│   └── openapi-payment.json        # exporté depuis payment-api (make export-openapi)
+├── libs/
+│   └── common/                     # package resilience_common (logging, metrics, health, auth, hmac, settings)
+│       ├── pyproject.toml
+│       ├── src/resilience_common/
+│       └── tests/
+├── services/
+│   └── payment-api/
+│       ├── pyproject.toml
+│       ├── Dockerfile
+│       ├── alembic.ini
+│       ├── migrations/
+│       ├── src/payment_api/
+│       │   ├── main.py             # create_app() — uvicorn --factory
+│       │   ├── settings.py         # pydantic-settings, secrets lus depuis $SECRETS_DIR
+│       │   ├── api/                # payments.py, accounts.py, admin.py
+│       │   ├── domain/             # règles pures : rules.py, iban.py, bic.py
+│       │   ├── repo/               # accounts.py, transactions.py, ledger.py
+│       │   ├── service.py          # cas d'usage transactionnel (virement)
+│       │   ├── crypto.py           # déchiffrement hybride RSA-OAEP + AES-GCM, HMAC IBAN
+│       │   ├── models.py, db.py, schemas.py
+│       │   ├── bootstrap.py        # migrations + seed au démarrage
+│       │   ├── export_openapi.py
+│       │   └── seed.py             # comptes fictifs, idempotent
+│       └── tests/
+├── frontend/                       # app de paiement (Next.js), servie sous `/`
+│   ├── app/
+│   │   ├── page.tsx                 # accueil
+│   │   └── payment/page.tsx         # formulaire de virement
+│   ├── lib/
+│   │   ├── crypto.ts                # chiffrement hybride RSA-OAEP + AES-GCM (contrat §7)
+│   │   ├── crypto.test.ts           # tests Vitest
+│   │   ├── payments.ts              # client API (clé publique, virement, retry sur decryption_failed)
+│   │   └── format.ts                # formatage IBAN, formatage des montants en euros
+│   ├── .env.example                 # à copier en .env.local (gitignoré)
+│   └── Dockerfile
+└── observability
+    ├── grafana/ provisioning/datasources
+    │   └── datasources.yml          # sources de données pour brancher Prometheus et Loki
+    ├── loki
+    │    └── loki-config.yml      # version minimale, mono-instance, stockage local
+    └── prometheus
+         └── prometheus.yml      # cibles désignées par le nom du conteneur Docker + Port
 ```
 
 `services/prober`, `services/remediation-engine` et `frontend-attack/` ne sont pas encore créés dans ce dépôt (voir `.claude/CLAUDE.md` §11-12 pour le plan). L'authentification Keycloak/OIDC côté frontend n'est pas encore implémentée : c'est la prochaine étape, sur une branche dédiée.
@@ -192,7 +246,7 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_p
 - `rsa_private_key` est recommandé pour la démo/le dev continu : sans lui, une clé RSA éphémère est générée à chaque redémarrage, ce qui invalide la clé publique mise en cache côté frontend (le frontend et le prober s'en remettent via un retry sur `decryption_failed`, mais c'est à éviter en usage courant).
 - **Ne jamais régénérer `iban_hmac_key` sur une base existante** : les comptes deviennent introuvables par IBAN.
 
-### 2. Lancer la stack (Postgres + payment-api)
+### 2. Lancer la stack (Postgres + payment-api + frontend + keycloak + prober + remediation)
 
 ```bash
 docker compose -f compose.dev.yaml up -d --build
@@ -204,29 +258,44 @@ Ou via le Makefile (hors Windows sans `make`, lancer la commande Docker directem
 make dev-up
 ```
 
+`payment-api` écoute en local sur `127.0.0.1:8001` (mappé vers le port interne `8000`). Au démarrage : migrations Alembic puis seed des comptes fictifs (`alice`, `bob`, `carol`, `PROBE`, `PROBE_SINK`, `bank_reserve`).
+
+### Observabilité (Prometheus, Loki, Grafana)
+
+```bash
+# Installer le plugin loki
+docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
+
+# Depuis la racine du dépôt
+docker compose -f observability/docker-compose.observability.yml up -d
+
+# Changer le mot de passe admin Grafana (il n'est lu dans le secret qu'à la création du volume)
+docker exec grafana grafana cli admin reset-admin-password TestPassword123
+```
+
 Vérifier que tout est démarré :
 
 ```bash
 docker compose -f compose.dev.yaml ps
+docker compose -f observability/docker-compose.observability.yml ps
 docker compose -f compose.dev.yaml logs payment-api --tail=50
 ```
-
-`payment-api` écoute en local sur `127.0.0.1:8001` (mappé vers le port interne `8000`). Au démarrage : migrations Alembic puis seed des comptes fictifs (`alice`, `bob`, `carol`, `PROBE`, `PROBE_SINK`, `bank_reserve`).
 
 Arrêt :
 
 ```bash
-docker compose -f compose.dev.yaml down
-docker compose -f compose.dev.yaml -f observability/docker-compose.observability.yml up -d --build
-# ou : make dev-down
+docker compose -f observability/docker-compose.observability.yml down   # si l'observabilité tourne
+docker compose -f compose.dev.yaml down                                 # ou : make dev-down
 ```
+
+Les deux stacks partagent le réseau `resilience-alpha_monitoring` : le premier `down` signale qu'il ne peut pas le supprimer (`has active endpoints`), c'est normal, le second le supprime. Ne jamais ajouter `--remove-orphans` : il supprimerait les conteneurs de l'autre stack.
 
 ### 3. Variables d'environnement utiles (backend)
 
-| Variable | Rôle | Défaut dev |
-| --- | --- | --- |
-| `CORS_ORIGINS` | Origines autorisées pour les appels navigateur (liste JSON) | `["http://localhost:3000"]` |
-| `SECRETS_DIR` | Dossier des secrets | `/run/secrets` dans le conteneur |
+| Variable       | Rôle                                                        | Défaut dev                       |
+| -------------- | ----------------------------------------------------------- | -------------------------------- |
+| `CORS_ORIGINS` | Origines autorisées pour les appels navigateur (liste JSON) | `["http://localhost:3000"]`      |
+| `SECRETS_DIR`  | Dossier des secrets                                         | `/run/secrets` dans le conteneur |
 
 ## Démarrage — frontend
 
@@ -273,9 +342,11 @@ cd frontend && npm run lint   # ESLint
 Avec le backend et le frontend lancés :
 
 1. **Clé publique (endpoint non authentifié)** :
+
    ```bash
    curl http://localhost:8001/api/payments/public-key
    ```
+
    Doit renvoyer `200` avec `{public_key, key_id, algorithm, content_encryption}`.
 
 2. **Formulaire de virement** : ouvrir `http://localhost:3000/payment`, remplir IBAN/bénéficiaire/montant, soumettre.
@@ -308,23 +379,13 @@ docker compose -f compose.dev.yaml start payment-api
 docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT owner_id, label, iban_masked, bic FROM payments.accounts ORDER BY label;"
 
 # Soldes calculés (somme du ledger)
-docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT a.label, COALESCE(SUM(e.amount_cents),0) AS balance_cents FROM payments.accounts a LEFT JOIN payments.ledger_entries e ON e.account_id = a.id GROUP BY a.label ORDER BY a.label;"
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT a.label, COALESCE(SUM(e.amount),0) AS balance FROM payments.accounts a LEFT JOIN payments.ledger_entries e ON e.account_id = a.id GROUP BY a.label ORDER BY a.label;"
 
 # Derniers virements (ceux du prober s'accumulent : PROBE → PROBE_SINK)
-docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT created_at, amount_cents, status, dst_iban_masked FROM payments.transactions ORDER BY created_at DESC LIMIT 10;"
+docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience -c "SELECT created_at, amount, status, dst_iban_masked FROM payments.transactions ORDER BY created_at DESC LIMIT 10;"
 
 # Session interactive (\dt payments.*, \d payments.accounts, etc.)
 docker compose -f compose.dev.yaml exec postgres psql -U payment_app -d resilience
-```
-
-### Observabilité (Prometheus, Loki, Grafana)
-
-```bash
-# Depuis la racine du dépôt
-docker compose -f observability/docker-compose.observability.yml up -d
-
-# Changer le mot de passe admin Grafana (il n'est lu dans le secret qu'à la création du volume)
-docker exec grafana grafana cli admin reset-admin-password TestPassword123
 ```
 
 Voir [observability/README.md](observability/README.md) pour les détails.

@@ -39,7 +39,7 @@ Un conteneur redémarré ne vaut pas preuve.
 1. **Monorepo**, avec un **workspace uv** pour le Python (un `pyproject.toml` par service, un `uv.lock` commun) et un **workspace pnpm** pour le front.
 2. **Authentification = Keycloak**, configuré par un export de realm versionné. **Aucun service d'auth maison.**
 3. **Preuve de reprise** = un `prober` qui exécute une vraie transaction toutes les 5 s **en passant par le WAF**, et un endpoint `/api/admin/ledger/check` qui vérifie l'invariant comptable.
-4. **Paiements idempotents** (header `Idempotency-Key` obligatoire) et **ledger en partie double**, montants en centimes entiers.
+4. **Paiements idempotents** (header `Idempotency-Key` obligatoire) et **ledger en partie double**, montants en **euros décimaux exacts** : `NUMERIC(12,2)` en base, `Decimal` en Python, chaîne `"50.05"` dans l'API (jamais de float). Modifié le 20/10 (auparavant : centimes entiers).
 5. **Moteur de remédiation** = machine d'états persistée. Les actions passent par une interface `Executor` : `FakeExecutor` pour le développement et les tests, `AnsibleExecutor` (via ansible-runner, playbooks fournis par l'infra) pour le réel. Les actions sont limitées à une liste fermée, avec des paramètres validés.
 6. **Le moteur n'accède jamais à `docker.sock` directement.** Les playbooks passent par un `docker-socket-proxy` (géré par l'infra).
 7. **Les contrats d'abord** : les OpenAPI et JSON Schemas dans `contracts/` sont la source de vérité. Les types TypeScript en sont **générés**, jamais écrits à la main.
@@ -282,14 +282,14 @@ accounts(id uuid pk, owner_id uuid not null unique, iban_hash text not null uniq
 transactions(id uuid pk, idempotency_key text unique not null, owner_id uuid not null,
              src_account uuid fk not null, dst_account uuid fk not null,
              dst_iban_masked text not null,
-             amount_cents bigint not null check (amount_cents > 0),
+             amount numeric(12,2) not null check (amount > 0),
              status text not null check (status in ('COMPLETED','REJECTED')),
              request_hash text not null, created_at timestamptz)
-ledger_entries(id bigint identity pk, tx_id uuid fk, account_id uuid fk, amount_cents bigint not null)
+ledger_entries(id bigint identity pk, tx_id uuid fk, account_id uuid fk, amount numeric(12,2) not null)
 index ledger_entries(account_id), ledger_entries(tx_id), transactions(owner_id, created_at desc)
 ```
 
-Le solde est **calculé** (`SUM(ledger_entries.amount_cents)`), jamais stocké. `owner_id` = `sub` Keycloak. `request_hash` est un HMAC (même clé que les IBAN).
+Le solde est **calculé** (`SUM(ledger_entries.amount)`), jamais stocké. `owner_id` = `sub` Keycloak. `request_hash` est un HMAC (même clé que les IBAN).
 
 Migration unique `0001` (modifiée en place tant que rien n'est déployé : après un changement, `docker compose -f compose.dev.yaml down -v`).
 
@@ -316,7 +316,7 @@ Les routes métier sont sous **`/api`** ; les sondes techniques restent à la ra
 | POST | `/api/payments/transfer` (header `Idempotency-Key` requis) | client, prober | 201 créé, 200 rejeu, 400 `decryption_failed`, 403 `no_account`, 409 `idempotency_conflict`, 422 (`insufficient_funds`, `invalid_iban`, `invalid_bic`, `bic_mismatch`, `unknown_account`, `same_account`, `invalid_payload`, validation) |
 | GET | `/api/payments/{id}` | émetteur ou destinataire | 200, 404 |
 | GET | `/api/payments?limit=` | client, prober | historique : virements émis et reçus |
-| GET | `/api/accounts/me` | client, prober | **un objet** `{id, iban_masked, bic, label, currency, balance_cents}` ; 404 si aucun compte |
+| GET | `/api/accounts/me` | client, prober | **un objet** `{id, iban_masked, bic, label, currency, balance}` (`balance` en chaîne décimale, ex. `"1500.00"`) ; 404 si aucun compte |
 | GET | `/api/admin/ledger/check` | ops | `{ok, unbalanced_tx[], incomplete_tx[], negative_accounts[]}` |
 
 Erreurs métier au format `{"detail": {"code": "...", "message": "..."}}`. Les messages ne contiennent jamais de valeur saisie.
@@ -331,7 +331,7 @@ Erreurs métier au format `{"detail": {"code": "...", "message": "..."}}`. Les m
    c. AES-GCM (tag 128 bits ; WebCrypto renvoie ciphertext || tag : c'est le format attendu)
    d. clé AES brute (32 octets) chiffrée en RSA-OAEP, hash SHA-256
 3. POST /api/payments/transfer
-   { amount_cents, encrypted_key, iv, ciphertext }   (les trois derniers en base64 standard)
+   { amount: "50.05", encrypted_key, iv, ciphertext }   (les trois derniers en base64 standard)
 4. Back : déchiffre, normalise (espaces/minuscules acceptés), valide IBAN (mod 97) et BIC,
    résout le compte par HMAC, exécute le virement.
 ```
@@ -354,7 +354,7 @@ async def transfer(s, key, owner, req, pseudo):
         dst = await find_by_iban_hash(s, pseudo.iban_hash(req.dst_iban)) or raise UnknownAccount  # 422
         check_bic(dst.bic, req.dst_bic); check_distinct(src.id, dst.id)
         await lock_accounts(s, sorted([src.id, dst.id]))     # SELECT … FOR UPDATE, ordre stable
-        check_funds(await balance(s, src.id), req.amount_cents)                      # 422
+        check_funds(await balance(s, src.id), req.amount)                      # 422
         tx = await insert(..., dst_iban_masked=mask(req.dst_iban))
         await insert_entries(s, tx.id, [(src.id, -amount), (dst.id, +amount)])
     return tx, True                                          # 201
@@ -367,11 +367,11 @@ async def transfer(s, key, owner, req, pseudo):
 ### Contrôle d'invariant (`/api/admin/ledger/check`)
 
 ```sql
-SELECT tx_id FROM ledger_entries GROUP BY tx_id HAVING SUM(amount_cents) <> 0;
+SELECT tx_id FROM ledger_entries GROUP BY tx_id HAVING SUM(amount) <> 0;
 SELECT t.id FROM transactions t LEFT JOIN ledger_entries e ON e.tx_id = t.id
  WHERE t.status = 'COMPLETED' GROUP BY t.id HAVING COUNT(e.id) <> 2;
 SELECT account_id FROM ledger_entries e JOIN accounts a ON a.id = e.account_id
- WHERE a.label <> 'bank_reserve' GROUP BY account_id HAVING SUM(amount_cents) < 0;
+ WHERE a.label <> 'bank_reserve' GROUP BY account_id HAVING SUM(amount) < 0;
 ```
 
 ### Secrets (fichiers dans `$SECRETS_DIR`, défaut `/run/secrets`)

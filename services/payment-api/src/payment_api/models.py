@@ -1,6 +1,7 @@
 """Tables du schéma `payments`. Le solde n'est jamais stocké : SUM(ledger_entries)."""
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -11,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     MetaData,
+    Numeric,
     Text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -48,7 +50,7 @@ class Account(Base):
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
-        CheckConstraint("amount_cents > 0", name="ck_transactions_amount_positive"),
+        CheckConstraint("amount > 0", name="ck_transactions_amount_positive"),
         CheckConstraint("status IN ('COMPLETED','REJECTED')", name="ck_transactions_status"),
         Index("ix_transactions_owner_created", "owner_id", "created_at"),
     )
@@ -60,7 +62,7 @@ class Transaction(Base):
     dst_account: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"))
     # IBAN saisi par l'émetteur, conservé masqué uniquement (pays + 4 derniers caractères).
     dst_iban_masked: Mapped[str] = mapped_column(Text)
-    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))  # euros, 2 décimales
     status: Mapped[str] = mapped_column(Text)
     request_hash: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -72,4 +74,4 @@ class LedgerEntry(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     tx_id: Mapped[UUID] = mapped_column(ForeignKey("transactions.id"), index=True)
     account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"), index=True)
-    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))

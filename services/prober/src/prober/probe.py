@@ -75,7 +75,7 @@ class Prober:
         }
         return await self.client.post(
             f"{self.settings.target_url}/api/payments/transfer",
-            json={"amount_cents": 1, **seal(pem, beneficiary)},
+            json={"amount": "0.01", **seal(pem, beneficiary)},
             headers={
                 "Authorization": f"Bearer {token}",
                 "Idempotency-Key": idempotency_key,

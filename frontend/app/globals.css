@@ -1,26 +1,46 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ra-background: #ffffff;
+  --ra-foreground: #0a0a0a;
+  --ra-brand: #59c144;
+  --ra-brand-hover: #4ca425;
+  --ra-input-text: #636060;
+
+  --ra-border-primary: #e4e4e4;
+  --ra-background-secondary: #f9f9f9;
+
+  --ra-status-ok-text: #259800;
+  --ra-status-ok-bg: #f0feed;
+  --ra-status-alert-text: #dc2626;
+  --ra-status-alert-bg: #feeded;
+  --ra-status-warning-text: #c2410c;
+  --ra-status-warning-bg: #fff1e8;
+
+  --ra-sidebar-width: 224px;
+  --ra-navbar-height: 64px;
+  --ra-user-menu-width: 192px;
+
+  /* Alias génériques utilisés par Tailwind ci-dessous. */
+  --background: var(--ra-background);
+  --foreground: var(--ra-foreground);
 }
+
+/* Fond blanc fixe (lisibilité sur rétroprojecteur) : pas de variante sombre
+   liée aux préférences système, volontairement. */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-poppins);
+  --font-mono: var(--font-geist-mono);
+  /* Réservé à la saisie utilisateur (champs de formulaire), comme sur /admin. */
+  --font-input: var(--font-rem);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), sans-serif;
 }

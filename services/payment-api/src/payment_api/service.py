@@ -38,14 +38,12 @@ async def transfer(
             rules.check_distinct(src.id, dst.id)
 
             await accounts_repo.lock_accounts(s, rules.lock_order(src.id, dst.id))
-            rules.check_funds(await accounts_repo.balance(s, src.id), req.amount_cents)
+            rules.check_funds(await accounts_repo.balance(s, src.id), req.amount)
 
             tx = await tx_repo.insert(
                 s, key, request_hash, owner, req, src.id, dst.id, STATUS_COMPLETED
             )
-            await tx_repo.insert_entries(
-                s, tx.id, [(src.id, -req.amount_cents), (dst.id, req.amount_cents)]
-            )
+            await tx_repo.insert_entries(s, tx.id, [(src.id, -req.amount), (dst.id, req.amount)])
             return tx, True
     except IntegrityError:
         # Course entre deux requêtes portant la même clé : l'autre a gagné, on la relit.
