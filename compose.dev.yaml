@@ -22,6 +22,10 @@ secrets:
     file: ./.secrets/prober_client_secret
   grafana_admin_password:
     file: ./.secrets/grafana_admin_password
+  webhook_hmac_key:               # HMAC partagé detection <-> remediation-engine
+    file: ./.secrets/webhook_hmac_key
+  remediation_client_secret:      # = REMEDIATION_CLIENT_SECRET de keycloak.env
+    file: ./.secrets/remediation_client_secret
 
 services:
   keycloak:
@@ -92,6 +96,9 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_started
+    networks:               # monitoring : pour que Prometheus (réseau monitoring) scrape /metrics
+      - default
+      - monitoring
 
   # En dev, pas de WAF : la sonde tape payment-api directement (en prod : https://192.168.137.1).
   prober:
@@ -112,6 +119,42 @@ services:
     networks:
       - default
       - monitoring
+
+  # Moteur de remédiation. En dev : actions simulées (EXECUTOR=fake, pas de playbooks infra),
+  # mais vérification RÉELLE (sondes du prober + ledger_check avec jeton ops) et persistance
+  # Postgres (schéma `remediation`). Prod : EXECUTOR=ansible + playbooks montés dans /playbooks.
+  remediation-engine:
+    build:
+      context: .
+      dockerfile: services/remediation-engine/Dockerfile
+    environment:
+      LOG_LEVEL: INFO
+      OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      EXECUTOR: fake
+      VERIFIER: real
+      # En dev, pas de WAF : le ledger est lu directement sur payment-api.
+      LEDGER_URL: http://payment-api:8000/api/admin/ledger/check
+      KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
+      DB_HOST: postgres
+    secrets: [webhook_hmac_key, remediation_client_secret, db_password]
+    ports: ["127.0.0.1:8003:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [default, monitoring]
+
+  # Détection ML : lit Prometheus, poste une alerte signée au moteur quand une anomalie persiste.
+  # Nécessite detection/model.joblib (collect + train une fois, cf. detection/README.md).
+  detection:
+    build:
+      context: .
+      dockerfile: detection/Dockerfile
+    # Bind-mount : model.joblib entraîné sur l'hôte est lu directement, sans rebuild (dev).
+    volumes: ["./detection:/app/detection"]
+    secrets: [webhook_hmac_key]
+    depends_on: [remediation-engine]
+    networks: [default, monitoring]
 
   frontend:
     build:

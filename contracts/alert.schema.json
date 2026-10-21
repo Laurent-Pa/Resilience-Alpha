@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resilience-alpha/contracts/alert.schema.json",
+  "title": "Alert",
+  "description": "Corps d'une alerte entrante sur POST /alerts du remediation-engine, format ml-detector. Le webhook Alertmanager (v4) est normalisé séparément vers le même modèle interne. La signature HMAC voyage dans l'en-tête X-Signature, pas dans ce corps.",
+  "type": "object",
+  "required": ["source", "type", "target", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "source": {
+      "const": "ml",
+      "description": "Origine de l'alerte. 'ml' = detecteur d'anomalies (Isolation Forest)."
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Type d'anomalie. Pour le ML : 'anomaly'. Utilise par le classifier pour choisir le type d'incident.",
+      "examples": ["anomaly"]
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Service vise par l'anomalie.",
+      "examples": ["payment-api"]
+    },
+    "src_ip": {
+      "type": ["string", "null"],
+      "format": "ipv4",
+      "description": "IP source dominante, a bloquer par block_ip. null si inconnue (ex. anomalie non liee a une IP). Issue de topk(sum by (src_ip)(rate(http_requests_by_source_total[1m]))).",
+      "examples": ["203.0.113.66", null]
+    },
+    "score": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Score d'anomalie dans [0,1]. null si non applicable.",
+      "examples": [0.93]
+    },
+    "features": {
+      "type": "object",
+      "description": "Releve des metriques au moment de l'anomalie (signaux PromQL surveilles).",
+      "additionalProperties": { "type": "number" }
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Horodatage du debut de l'anomalie (base du MTTD cote moteur)."
+    }
+  },
+  "examples": [
+    {
+      "source": "ml",
+      "type": "anomaly",
+      "target": "payment-api",
+      "src_ip": "203.0.113.66",
+      "score": 0.93,
+      "features": {
+        "req_rate": 182.4,
+        "error_rate": 97.1,
+        "http_latency_p95": 2.4,
+        "probe_success": 0.0,
+        "probe_latency_p95": 3.0,
+        "probe_failures_rate": 0.4
+      },
+      "at": "2026-10-21T14:03:12Z"
+    }
+  ]
+}

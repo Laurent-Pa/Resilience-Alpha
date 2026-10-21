@@ -21,6 +21,7 @@ web/**/dist/
 # Divers
 .DS_Store
 *.log
+.claude/SESSION-NOTES.md
 
 # Vault & Keycloak
 */init-response

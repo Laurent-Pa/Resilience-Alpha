@@ -102,3 +102,10 @@ async def test_metrics_use_route_template():
         body = (await c.get("/metrics")).text
     assert 'http_requests_total{method="GET",route="/items/{item_id}",status="200"}' in body
     assert "http_request_duration_seconds_bucket" in body
+
+
+async def test_metrics_count_requests_by_source_ip():
+    async with client(make_app()) as c:
+        await c.get("/items/42", headers={"X-Forwarded-For": "203.0.113.7, 172.18.0.2"})
+        body = (await c.get("/metrics")).text
+    assert 'http_requests_by_source_total{src_ip="203.0.113.7"}' in body

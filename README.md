@@ -140,6 +140,12 @@ resilience-alpha/
 │       ├── pyproject.toml
 │       ├── src/resilience_common/
 │       └── tests/
+├── detection/                      # détection ML d'anomalies (Isolation Forest) → alerte signée au moteur (voir detection/README.md)
+├── scripts/
+│   ├── flood.py                    # générateur de charge (attaque DoS contrôlée), modes get / transfer
+│   └── fake_alert.py               # poste une alerte signée au moteur (secours / test)
+├── docs/
+│   └── prod-interface.md           # contrat code ↔ infra pour le compose de prod
 ├── services/
 │   ├── payment-api/
 │   │   ├── pyproject.toml
@@ -159,7 +165,8 @@ resilience-alpha/
 │   │   │   ├── export_openapi.py
 │   │   │   └── seed.py             # comptes fictifs, idempotent
 │   │   └── tests/
-│   └── prober/
+│   ├── remediation-engine/         # machine d'états + executors fake/ansible (FakeExecutor par défaut)
+│   └── prober/                     # preuve de reprise : un vrai virement toutes les 5 s via le WAF
 │       ├── pyproject.toml
 │       ├── Dockerfile
 │       ├── src/prober/
@@ -187,7 +194,7 @@ resilience-alpha/
          └── prometheus.yml      # cibles désignées par le nom du conteneur Docker + Port
 ```
 
-`services/remediation-engine` et `frontend-attack/` ne sont pas encore créés dans ce dépôt (voir `.claude/CLAUDE.md` §9 et suivants pour le plan). `services/prober` est implémenté et testé. L'authentification Keycloak/OIDC côté frontend n'est pas encore implémentée : c'est la prochaine étape, sur une branche dédiée.
+`frontend-attack/` est abandonné : l'attaque est le script `scripts/flood.py` (voir `.claude/CLAUDE.md` §3 et §12 pour le plan). L'authentification Keycloak/OIDC côté frontend n'est pas encore implémentée : c'est la prochaine étape, sur une branche dédiée.
 
 ## Prérequis
 
@@ -205,6 +212,7 @@ resilience-alpha/
 mkdir -p .secrets
 openssl rand -hex 32 > .secrets/db_password
 openssl rand -hex 32 > .secrets/iban_hmac_key
+openssl rand -hex 32 > .secrets/webhook_hmac_key   # HMAC de POST /alerts : même valeur pour remediation-engine et detection
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
 openssl rand -hex 16 | tr -d '\n' > .secrets/grafana_admin_password
 openssl rand -hex 32 > .secrets/prober_client_secret
@@ -223,6 +231,7 @@ function New-Secret([int]$n, [switch]$Base64) {
 }
 Set-Content .secrets/db_password               (New-Secret 24)          -NoNewline -Encoding ascii
 Set-Content .secrets/iban_hmac_key             (New-Secret 32)          -NoNewline -Encoding ascii
+Set-Content .secrets/webhook_hmac_key          (New-Secret 32)          -NoNewline -Encoding ascii
 Set-Content .secrets/prober_client_secret      (New-Secret 32)          -NoNewline -Encoding ascii
 Set-Content .secrets/remediation_client_secret (New-Secret 32)          -NoNewline -Encoding ascii
 Set-Content .secrets/test_users_password       (New-Secret 12 -Base64)  -NoNewline -Encoding ascii
@@ -414,6 +423,32 @@ Invoke-RestMethod http://localhost:8002/status
 # Temps de détection : la sonde passe à 0 en moins de 10 s, puis repasse à 1 au redémarrage
 docker compose -f compose.dev.yaml stop payment-api
 docker compose -f compose.dev.yaml start payment-api
+```
+
+### Attaque, détection et remédiation (démo en dev, tout en simulation)
+
+`compose.dev.yaml` démarre la chaîne complète avec `EXECUTOR=fake` et `VERIFIER=fake` : les actions
+(`block_ip`, `recycle_service`, `kill_db_conns`) sont **simulées** et la reprise n'est pas prouvée par
+le prober. La vraie remédiation (Ansible, WAF, vérification réelle) est branchée sur le lab, voir
+[docs/prod-interface.md](docs/prod-interface.md).
+
+```powershell
+# Pile + observabilité (le secret .secrets/webhook_hmac_key doit exister)
+docker compose -f compose.dev.yaml -f observability/docker-compose.observability.yml up -d
+
+# Détection : collecter le trafic normal, entraîner, puis elle tourne en continu
+# (procédure complète : detection/README.md)
+
+# Attaque : en local il n'y a pas de WAF, on simule l'IP source avec --xff
+.\.venv\Scripts\python.exe scripts/flood.py --mode transfer -c 300 -d 60 --xff 8.8.8.8
+
+# Chaîne : détection → alerte signée → moteur (TRIAGED → EXECUTING → VERIFYING → RECOVERED)
+docker logs --tail 20 resilience-alpha-detection-1
+docker logs --tail 20 resilience-alpha-remediation-engine-1
+
+# Secours sans attendre la détection : alerte signée à la main
+$env:WEBHOOK_HMAC_SECRET = (Get-Content .secrets/webhook_hmac_key)
+.\.venv\Scripts\python.exe scripts/fake_alert.py --url http://127.0.0.1:8003/alerts
 ```
 
 ### Base de données

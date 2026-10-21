@@ -1,0 +1,24 @@
+[project]
+name = "remediation-engine"
+version = "0.1.0"
+description = "Moteur de remédiation : détecte -> décide -> exécute -> vérifie la reprise autonome"
+requires-python = ">=3.12"
+dependencies = [
+    "resilience-common",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "sse-starlette>=2.1",
+    "asyncpg>=0.30",
+    "ansible-runner>=2.4",
+    "ansible-core>=2.17",
+    "requests>=2.32",  # requis par la collection community.docker (playbooks)
+]
+
+[tool.uv.sources]
+resilience-common = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"

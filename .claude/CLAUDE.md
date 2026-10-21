@@ -36,7 +36,7 @@ Un conteneur redémarré ne vaut pas preuve.
 
 ## 2. Décisions d'architecture (figées)
 
-1. **Monorepo**, avec un **workspace uv** pour le Python (un `pyproject.toml` par service, un `uv.lock` commun) et un **workspace pnpm** pour le front.
+1. **Monorepo**, avec un **workspace uv** pour le Python (un `pyproject.toml` par service, un `uv.lock` commun) et un **workspace pnpm** pour le front. **(21/10 : uv n'est requis que côté dev pour maintenir `uv.lock` ; la prod n'a besoin que de Docker — uv est embarqué dans les images, jamais installé sur l'hôte. Voir §4.)**
 2. **Authentification = Keycloak**, configuré par un export de realm versionné. **Aucun service d'auth maison.**
 3. **Preuve de reprise** = un `prober` qui exécute une vraie transaction toutes les 5 s **en passant par le WAF**, et un endpoint `/api/admin/ledger/check` qui vérifie l'invariant comptable.
 4. **Paiements idempotents** (header `Idempotency-Key` obligatoire) et **ledger en partie double**, montants en **euros décimaux exacts** : `NUMERIC(12,2)` en base, `Decimal` en Python, chaîne `"50.05"` dans l'API (jamais de float). Modifié le 20/10 (auparavant : centimes entiers).
@@ -74,7 +74,7 @@ resilience-alpha/
 │       ├── pyproject.toml
 │       └── src/resilience_common/
 │           ├── logging.py         # structlog JSON + middleware X-Request-ID → trace_id
-│           ├── metrics.py         # middleware http_requests_total, http_request_duration_seconds + /metrics
+│           ├── metrics.py         # middleware http_requests_total, _by_source{src_ip}, http_request_duration_seconds + /metrics
 │           ├── health.py          # router /health/live, /health/ready (checks injectés)
 │           ├── auth.py            # vérif JWT Keycloak (JWKS en cache) + require_role()
 │           ├── hmac.py            # signature et vérification des webhooks
@@ -120,12 +120,16 @@ resilience-alpha/
 │   ├── lib/                       # crypto.ts, payments.ts, format.ts — types écrits à la main
 │   ├── Dockerfile
 │   └── package.json
-└── frontend-attack/               # app de déclenchement d'attaque simulée — PAS ENCORE CRÉÉE
-    └── ...                        # dossier indépendant de frontend/, structure à venir
+├── scripts/
+│   └── flood.py                   # générateur de charge (attaque DoS contrôlée) : modes get / transfer
+└── detection/                     # service ML d'anomalies (pilier IA, standalone pip, Isolation Forest)
+    ├── collect.py, train.py, detect.py   # collecte normal → modèle → alerte HMAC conforme alert.schema.json
+    ├── config.py, prom.py, signing.py
+    └── Dockerfile
 ```
 
 `services/ml-detector` et `services/rag-assistant` appartiennent au pilier IA. Ils seront ajoutés au même workspace uv par leur propriétaire.
-**Note (19/10) :** l'arborescence `web/` du plan initial (workspace pnpm, `@ra/api-client`, `@ra/ui`, `pay`/`ops` en Vite) n'a pas été retenue. L'app de paiement existe déjà en Next.js dans `frontend/`. La seconde app (déclenchement d'attaque) ira dans un dossier séparé à la racine plutôt que dans `frontend/`, pour garder la même séparation de rôles/clients Keycloak que `web/pay` vs `web/ops` dans le plan initial.
+**Note (19/10) :** l'arborescence `web/` du plan initial (workspace pnpm, `@ra/api-client`, `@ra/ui`, `pay`/`ops` en Vite) n'a pas été retenue. L'app de paiement existe déjà en Next.js dans `frontend/`. La seconde app (déclenchement d'attaque) devait aller dans un dossier séparé à la racine. **Mise à jour (21/10) :** `frontend-attack/` abandonné — l'attaque est finalement un script CLI `scripts/flood.py` (générateur de charge, modes `get`/`transfer`), lancé depuis le PC Attaquant ; une app front n'apporte rien pour déclencher la charge.
 
 ---
 
@@ -159,6 +163,12 @@ cd frontend && npx create-next-app@latest .   # TypeScript, Tailwind, App Router
 # cd frontend-attack && npx create-next-app@latest .
 ```
 
+**Mise en place — qui a besoin d'uv, où.** uv n'est **jamais** installé sur la machine de prod : il est **embarqué dans les images** (`COPY --from=ghcr.io/astral-sh/uv`). Il n'est requis que côté **dev**, pour maintenir `uv.lock`.
+
+- **Déploiement / démo (VM neuve)** : `docker compose up --build`. Besoin : **Docker seul**. Le build exécute `uv sync --frozen` **dans l'image** → installe les versions **exactes** du `uv.lock` commité (reproductible, sûr pour le live). Aucun `uv sync` à taper sur la VM.
+- **Dev** : `uv sync --all-packages` installe tout le workspace dans `.venv` (sans `--all-packages`, uv ne sync que le projet racine → `ModuleNotFoundError`). Puis `uv run pytest` ou `.venv\Scripts\python -m pytest`. Quand les deps changent → `uv sync` régénère `uv.lock`, qu'on **commite** : c'est le seul moment où uv est nécessaire.
+- Les tests trouvent les paquets first-party via `pythonpath` de pytest (marche même sans réinstaller). Pour lancer un service à la main hors Docker, poser `PYTHONPATH` sur son `src` — cf. §9.
+
 **Dockerfile type** (contexte de build = racine du dépôt) :
 
 ```dockerfile
@@ -168,7 +178,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY libs/ libs/
 COPY services/<svc>/ services/<svc>/
-RUN uv sync --frozen --no-dev --package <svc>
+RUN uv sync --frozen --no-dev --package <svc>   # uv embarqué + uv.lock commité : build reproductible
 RUN useradd -r app && chown -R app /app
 USER app
 # Ne PAS utiliser `uv run` au runtime : il exige un cache dans le home de l'utilisateur
@@ -433,11 +443,40 @@ Le prober est un service séparé : il doit survivre à la panne de tous les aut
 
 ## 9. remediation-engine
 
+> **État : étape 7 faite côté code (21/10)** — `services/remediation-engine/`. AnsibleExecutor réel (ansible-runner + timeout, validé dans l'image), Verifier réel (sondes + `ledger_check` avec jeton ops `client_credentials`, erreurs réseau = « pas OK », jamais un crash), persistance Postgres (schéma `remediation`, DDL au démarrage, écritures best-effort) + reprise au redémarrage. Sans `DB_HOST` : mémoire ; `EXECUTOR`/`VERIFIER=fake` par défaut pour le dev nu. 22 tests verts + ruff. Contrat des playbooks pour l'infra : `docs/prod-interface.md` §3.
+
+### Fonctionnement
+
+`POST /alerts` (signé HMAC) → normalisation (ml / Alertmanager) → `classify` → orchestrateur : machine d'états, dédoublonnage `(type, target)`, retries (×3), cooldown + flapping → `Executor` (fake|ansible) → `Verifier` (fake|real) → `RECOVERED` ou `ESCALATED`. Chaque transition est journalisée (`remediation.transition`), stockée et publiée sur le bus → SSE `/events`. Métriques sur `/metrics`.
+
+**Config (variables d'env)** : `EXECUTOR=fake|ansible`, `VERIFIER=fake|real`, `WEBHOOK_HMAC_KEY` (secret HMAC de `/alerts`, sinon fichier `$SECRETS_DIR/webhook_hmac_key`), `PROBER_STATUS_URL`, `LEDGER_URL`, `CA_BUNDLE`, `KC_TOKEN_URL`, `CLIENT_ID`, `PLAYBOOKS_DIR`, `ACTION_TIMEOUT_S`, `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`, `COOLDOWN_S`, `FLAPPING_MAX`, `FLAPPING_WINDOW_S`. Secrets fichiers : `webhook_hmac_key`, `remediation_client_secret`, `db_password`.
+
+### Test et démo
+
+**Dev local (sans uv ni Keycloak).** Le paquet n'est pas installé dans le venv (uv absent de la machine) : poser `PYTHONPATH` sur son `src` à chaque terminal.
+
+1. Tests (les 7 critères de l'étape 5) — `pythonpath` de pytest trouve les paquets, pas de `PYTHONPATH` :
+   ```powershell
+   .\.venv\Scripts\python.exe -m pytest services/remediation-engine/tests -q   # -> 15 passed
+   ```
+2. Flux complet en HTTP réel (tout en fake, 2 terminaux) :
+   ```powershell
+   # Terminal A — le moteur
+   $env:PYTHONPATH = "$PWD\services\remediation-engine\src"; $env:WEBHOOK_HMAC_KEY = "devsecret"
+   .\.venv\Scripts\python.exe -m uvicorn --factory remediation_engine.main:create_app --port 8003
+   # Terminal B — une alerte signée (MÊME secret)
+   $env:WEBHOOK_HMAC_SECRET = "devsecret"
+   .\.venv\Scripts\python.exe scripts/fake_alert.py --url http://127.0.0.1:8003/alerts
+   ```
+   Le Terminal A montre `TRIAGED → EXECUTING` (3 actions) `→ VERIFYING → RECOVERED` (`mttr_s`). Escalade : `--src-ip 192.168.137.1` (IP interne refusée par `block_ip`) ou `--target postgres` (hors liste). `/incidents`, `/events`, `/stats` exigent un JWT ops (donc Keycloak).
+
+**Prod / démo (lab, étape 7).** Conteneurisé derrière le WAF : `EXECUTOR=ansible` (playbooks infra), `VERIFIER=real` (sondes prober + `ledger_check` via jeton ops), secret `webhook_hmac_key` par Vault. Les alertes viennent du `detection/` (ml) et d'Alertmanager. Scénario : `scripts/flood.py` (ou vraie attaque) → détection → `POST /alerts` → `block_ip` + `recycle_service` + `kill_db_conns` → `VERIFYING` → **le prober prouve un 201 + ledger ok** → `RECOVERED`, visible dans `web-ops` (SSE). `fake_alert.py` reste le secours pour déclencher la chaîne sans attendre une vraie alerte.
+
 ### API
 
 | Méthode | Route                      | Auth                                                                                                             | Rôle                                           |
 | ------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| POST    | `/alerts`                  | HMAC (`X-Signature: sha256=<hex>` sur le corps brut)                                                             | Entrée des alertes Alertmanager et ml-detector |
+| POST    | `/alerts`                  | HMAC (`X-Signature: sha256=<hex>` sur le corps brut, ml) **ou** `Authorization: Bearer` (secret `alertmanager_token`, Alertmanager) | Entrée des alertes Alertmanager et ml-detector |
 | GET     | `/incidents?state=&limit=` | JWT, rôle ops                                                                                                    | Liste                                          |
 | GET     | `/incidents/{id}`          | JWT, rôle ops                                                                                                    | Détail et transitions                          |
 | GET     | `/events`                  | JWT, rôle ops (jeton passé en query, car `EventSource` ne gère pas les headers ; vérifié puis jamais journalisé) | Flux SSE                                       |
@@ -448,7 +487,7 @@ Le prober est un service séparé : il doit survivre à la panne de tous les aut
 Les deux formats d'entrée sont convertis vers un modèle unique :
 
 - **Alertmanager** (webhook v4) : `alerts[].labels.{alertname, service, src_ip}` ;
-- **ml-detector** : `{"source":"ml","type":"anomaly","target":"payment-api","score":0.93,"features":{…},"src_ip":"…","at":"…"}`. Le format exact sera figé avec le pilier IA dans `contracts/alert.schema.json`.
+- **ml-detector** : `{"source":"ml","type":"anomaly","target":"payment-api","score":0.93,"features":{…},"src_ip":"…","at":"…"}`. **Figé (21/10)** dans `contracts/alert.schema.json` (signature HMAC en en-tête `X-Signature`, hors corps). Le `src_ip` dominant vient de la métrique `http_requests_by_source_total{src_ip}` (émise par payment-api via le middleware commun) : `topk(1, sum by (src_ip)(rate(...[1m])))`. Implémenté côté détecteur dans `detection/` (émet déjà l'alerte signée dès que `REMEDIATION_URL` est renseignée).
 
 ```python
 class Alert(BaseModel):
@@ -663,6 +702,15 @@ Composants Card, Badge, StatusDot (`ok`/`degraded`/`down`), Table, Button, Spinn
 Chaque étape se termine par des tests verts et un commit. **Ne pas passer à l'étape suivante sans les critères d'acceptation.**
 
 > **Avancement au 19/10 :** étapes 0, 1 et 3 **faites** (lint vert, 20 tests `libs/common`, 67 tests payment-api). Étape 4 (prober) **codée** (5 tests, image OK) ; critère d'acceptation à rejouer quand Keycloak (étape 2, en cours côté collègue : reprendre les UUID du §6) sera dans `compose.dev.yaml`.
+>
+> **Avancement au 21/10 :**
+> - **Attaque** : `scripts/flood.py` (générateur de charge, modes `get` et `transfer`). Le flood `transfer` sature le pool DB (verrou sur la ligne PROBE_SINK) → ~50 % de 5xx : dégradation visible et mesurable. Détection fiable = **taux de 5xx / débit** (pas `/health/ready` ni `probe_success`, qui récupèrent en pleine attaque car l'API shed la charge).
+> - **Détection** : service `detection/` (Isolation Forest sur métriques Prometheus) intégré ; alerte conforme `alert.schema.json` + signée HMAC (prête, inactive tant que `REMEDIATION_URL` vide).
+> - **src_ip** : nouvelle métrique `http_requests_by_source_total{src_ip}` (middleware commun) + payment-api ajouté au réseau `monitoring` de `compose.dev.yaml` (il en manquait, Prometheus ne le scrapait pas). Chaîne validée en local (en local `src_ip` = gateway Docker, vraie IP seulement derrière le WAF).
+> - **Contrat** : `contracts/alert.schema.json` figé.
+> - **Remédiation (étape 5)** : `services/remediation-engine/` **fait** — machine d'états, classifier, politique (`playbook_map.yaml`), orchestrateur (dédoublonnage, retries, cooldown, flapping), verifier, bus SSE, API `/alerts` (HMAC) + `/incidents` + `/stats` + `/events`, FakeExecutor/FakeVerifier, `scripts/fake_alert.py`. **15 tests verts + ruff.** Fonctionnement et étapes de test (dev/prod) : voir §9. Store en mémoire (persistance Postgres repoussée à l'étape 7).
+> - **uv / build (21/10)** : `uv.lock` régénéré (inclut remediation-engine), Dockerfiles en `uv sync --frozen` → **builds reproductibles**. uv **jamais** sur l'hôte (embarqué dans l'image) ; la prod n'a besoin que de Docker, uv n'est requis que côté dev pour le lock. `pythonpath` pytest pour lancer les tests sans réinstaller. Cf. §4.
+> - **Étape 7 (code) faite** : AnsibleExecutor, Verifier réel (jeton ops + ledger), persistance Postgres + reprise. `compose.dev.yaml` : moteur en `EXECUTOR=fake` + `VERIFIER=real` + Postgres. **Reste à l'infra** : playbooks (contrat dans `docs/prod-interface.md` §3), docker-socket-proxy, WAF (`/api/remediation` avec réécriture), Alertmanager signé.
 
 ### Étape 0 — Squelette (lundi)
 
