@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -6,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from payment_api.domain import iban
 from payment_api.domain.rules import TransferRequest
-from payment_api.models import INITIATED_BY_VALUES, Account, LedgerEntry, Transaction
+from payment_api.models import (
+    INITIATED_BY_VALUES,
+    STATUS_COMPLETED,
+    Account,
+    LedgerEntry,
+    Transaction,
+)
 
 
 async def get_by_key(s: AsyncSession, key: str) -> Transaction | None:
@@ -96,3 +103,23 @@ async def count_all(s: AsyncSession, exclude_initiated_by: str | None = None) ->
         stmt = stmt.where(Transaction.initiated_by.in_(_kept_origins(exclude_initiated_by)))
     total = await s.scalar(stmt)
     return int(total or 0)
+
+
+async def completed_per_minute(
+    s: AsyncSession, initiated_by: str, start: datetime, end: datetime
+) -> dict[datetime, int]:
+    """Virements réussis d'une origine, comptés par minute sur [start, end). Les minutes
+    sans virement sont absentes : à l'appelant de les compléter. Servie par
+    `ix_transactions_initiated_created` (égalité sur l'origine + plage sur la date)."""
+    minute = func.date_trunc("minute", Transaction.created_at).label("minute")
+    stmt = (
+        select(minute, func.count())
+        .where(
+            Transaction.initiated_by == initiated_by,
+            Transaction.status == STATUS_COMPLETED,
+            Transaction.created_at >= start,
+            Transaction.created_at < end,
+        )
+        .group_by(minute)
+    )
+    return {m: n for m, n in (await s.execute(stmt)).all()}

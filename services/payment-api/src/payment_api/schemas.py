@@ -103,6 +103,22 @@ class PaymentPage(BaseModel):
     page_size: int
 
 
+class ProberMinute(BaseModel):
+    minute: datetime = Field(description="Début de la minute (UTC)")
+    success_count: int = Field(description="Virements de la sonde réussis dans la minute")
+    expected_count: float = Field(description="Virements attendus : 60 / intervalle de la sonde")
+    success_pct: float = Field(description="Taux de réussite en %, plafonné à 100")
+
+
+class ProberSuccessRate(BaseModel):
+    """SLI de la sonde : une entrée par minute complète, de la plus ancienne à la plus
+    récente. Le dénominateur suppose la cadence nominale de la sonde (`interval_s`)."""
+
+    interval_s: float
+    window_minutes: int
+    points: list[ProberMinute]
+
+
 class Account(BaseModel):
     id: UUID
     iban_masked: str = Field(examples=["FR****8995"])

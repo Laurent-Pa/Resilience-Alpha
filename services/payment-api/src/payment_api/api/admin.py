@@ -1,14 +1,23 @@
+from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payment_api.db import get_session
+from payment_api.domain import probe_sli
 from payment_api.models import INITIATED_BY_PROBER
 from payment_api.repo import ledger as ledger_repo
 from payment_api.repo import transactions as tx_repo
-from payment_api.schemas import AdminPayment, LedgerCheck, PaymentPage
+from payment_api.schemas import (
+    AdminPayment,
+    LedgerCheck,
+    PaymentPage,
+    ProberMinute,
+    ProberSuccessRate,
+)
 from resilience_common.auth import require_role
 
 log = structlog.get_logger()
@@ -61,4 +70,27 @@ async def list_all_payments(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+PROBER_WINDOW_MINUTES = 60
+
+
+@router.get("/prober/success-rate", response_model=ProberSuccessRate)
+async def prober_success_rate(request: Request, session: Session) -> ProberSuccessRate:
+    """SLI de la sonde : taux de réussite par minute sur la dernière heure complète.
+
+    Calculé sur les virements réellement enregistrés, rapportés à la cadence nominale de
+    la sonde (PROBER_INTERVAL_S). Une sonde arrêtée ou en échec n'écrit rien : ses
+    minutes ressortent à 0 %, ce qui est le signal attendu.
+
+    Pas de log ici : le dashboard interroge cet endpoint en boucle."""
+    interval_s: float = request.app.state.prober_interval_s
+    start, end = probe_sli.minute_window(datetime.now(UTC), PROBER_WINDOW_MINUTES)
+    counts = await tx_repo.completed_per_minute(session, INITIATED_BY_PROBER, start, end)
+    points = probe_sli.success_series(counts, start, PROBER_WINDOW_MINUTES, interval_s)
+    return ProberSuccessRate(
+        interval_s=interval_s,
+        window_minutes=PROBER_WINDOW_MINUTES,
+        points=[ProberMinute(**asdict(p)) for p in points],
     )
