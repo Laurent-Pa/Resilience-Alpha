@@ -318,7 +318,9 @@ Les routes métier sont sous **`/api`** ; les sondes techniques restent à la ra
 | GET | `/api/payments?limit=` | client, prober | historique : virements émis et reçus |
 | GET | `/api/accounts/me` | client, prober | **un objet** `{id, iban_masked, bic, label, currency, balance}` (`balance` en chaîne décimale, ex. `"1500.00"`) ; 404 si aucun compte |
 | GET | `/api/admin/ledger/check` | ops | `{ok, unbalanced_tx[], incomplete_tx[], negative_accounts[]}` |
-
+| GET | `/api/admin/payments?page=&page_size=&include_prober=` | ops | `{items: AdminPayment[], total, page, page_size}`, tous émetteurs confondus ; **trafic de la sonde exclu par défaut** (`include_prober=true` le réintègre) ; `AdminPayment` = `Payment` + `initiated_by` (`user` \| `prober`), absent de `Payment` côté client |
++| GET | `/api/admin/prober/success-rate` | ops | `{interval_s, window_minutes: 60, points: [{minute, success_count, expected_count, success_pct}]}`, une entrée par minute complète ; voir « SLI de la sonde » |
+ 
 Erreurs métier au format `{"detail": {"code": "...", "message": "..."}}`. Les messages ne contiennent jamais de valeur saisie.
 
 ### Chiffrement des coordonnées bénéficiaire (contrat front ↔ back)
@@ -363,7 +365,8 @@ async def transfer(s, key, owner, req, pseudo):
 - Une `IntegrityError` sur `idempotency_key` (course entre deux requêtes) est attrapée : relire et renvoyer la transaction existante.
 - Les règles pures sont dans `domain/` (`rules.py`, `iban.py`, `bic.py`), testées sans base.
 - Métriques : `payments_total{status}` (`completed`, `replayed` ou le code d'erreur), `payment_duration_seconds`.
-
+- Origine : `transactions.initiated_by` (`user` | `prober`) est décidée par la couche API depuis le **rôle realm** du jeton, pas depuis l'UUID du compte, et un rejeu ne la réécrit pas. Index `(initiated_by, created_at)` car la sonde domine vite la table ; les filtres s'écrivent en `IN (...)` (via `INITIATED_BY_VALUES`), jamais en `!=`, qui ne sait pas utiliser l'index.
+ 
 ### Contrôle d'invariant (`/api/admin/ledger/check`)
 
 ```sql
@@ -371,8 +374,18 @@ SELECT tx_id FROM ledger_entries GROUP BY tx_id HAVING SUM(amount) <> 0;
 SELECT t.id FROM transactions t LEFT JOIN ledger_entries e ON e.tx_id = t.id
  WHERE t.status = 'COMPLETED' GROUP BY t.id HAVING COUNT(e.id) <> 2;
 SELECT account_id FROM ledger_entries e JOIN accounts a ON a.id = e.account_id
- WHERE a.label <> 'bank_reserve' GROUP BY account_id HAVING SUM(amount) < 0;
-```
+  WHERE a.label <> 'bank_reserve' GROUP BY account_id HAVING SUM(amount) < 0;
+ ```
+
+### SLI de la sonde (`/api/admin/prober/success-rate`)
+
+Taux de réussite par minute sur la dernière heure, affiché dans l'onglet Monitoring de `web-ops`. Calcul pur dans `domain/probe_sli.py`.
+
+payment-api ne voit que les virements **réussis** : un échec de sonde n'écrit rien. Le dénominateur vient donc de la cadence nominale : `expected_count = 60 / PROBER_INTERVAL_S`.
+**Couplage à respecter** : `PROBER_INTERVAL_S` (payment-api, défaut 5) doit rester égal à `INTERVAL_S` (prober, défaut 5). Si l'un change sans l'autre, le taux est faux. La mesure indépendante de cette hypothèse est `probe_success_ratio`, exposée par le prober (§8).
+La minute en cours est exclue (partielle, elle ferait plonger le dernier point) ; les minutes sans virement valent 0 % (une sonde arrêtée n'écrit rien, c'est le signal) ; le taux est plafonné à 100 %.
+Effet connu du plafond : une sonde qui tombe sur une frontière de minute donne 13 puis 11 virements, soit un creux à ~92 % sans aucun échec réel. Le compte brut (`success_count`) reste exposé.
+
 
 ### Secrets (fichiers dans `$SECRETS_DIR`, défaut `/run/secrets`)
 
@@ -381,7 +394,8 @@ SELECT account_id FROM ledger_entries e JOIN accounts a ON a.id = e.account_id
 | `db_password` | mot de passe du rôle `payment_app` | connexion sans mot de passe |
 | `iban_hmac_key` | ≥ 16 octets aléatoires (`openssl rand -hex 32`) | **démarrage refusé** |
 | `rsa_private_key` | PEM PKCS#8, RSA ≥ 2048 (3072 recommandé) | clé éphémère générée au démarrage (log `crypto.ephemeral_rsa_key`) : **à éviter en démo**, chaque recyclage invalide la clé publique en cache côté front |
-
+|`Taille explicite`| (`pool_size=10`, `max_overflow=5`), `pool_timeout=2`, `statemen
+ 
 **Ne jamais changer `iban_hmac_key` sur une base existante** : les comptes ne seraient plus retrouvables par IBAN.
 
 ### Pool DB
@@ -390,8 +404,8 @@ Taille explicite (`pool_size=10`, `max_overflow=5`), `pool_timeout=2`, `statemen
 
 ### Tests
 
-`uv run pytest services/payment-api` (Docker requis : Postgres via testcontainers). Couvrent : nominal, refus métier, IBAN/BIC, chiffrement (altération, mauvaise clé, IV invalide, payload incomplet), idempotence (rejeu, conflit, 10 requêtes concurrentes même clé), 50 virements croisés concurrents, ledger check, absence d'IBAN en clair en base et dans les logs.
-
+`uv run pytest services/payment-api` (Docker requis : Postgres via testcontainers). Couvrent : nominal, refus métier, IBAN/BIC, chiffrement (altération, mauvaise clé, IV invalide, payload incomplet), idempotence (rejeu, conflit, 10 requêtes concurrentes même clé), 50 virements croisés concurrents, ledger check, absence d'IBAN en clair en base et dans les logs, origine des opérations (rôle du jeton, rejeu), exclusion de la sonde de la vue admin, SLI par minute.
+ 
 ---
 
 ## 8. prober
@@ -407,8 +421,8 @@ Toutes les 5 s :
 3. `POST https://192.168.137.1/api/payments/transfer` **via le WAF** (vérification TLS par bundle CA configurable), **1 centime** du compte `PROBE` (déduit du jeton) vers l'IBAN de `PROBE_SINK` (variable d'environnement `PROBE_DST_IBAN`), coordonnées chiffrées avec `seal()`, `Idempotency-Key` UUID neuf ;
 4. succès si la réponse est 201 ;
 5. publier les résultats :
-   - métriques : `probe_success` (gauge 0/1), `probe_latency_seconds` (histogram), `probe_failures_total{stage="token|key|payment"}` ;
-   - log : `probe.result` avec `ok`, `stage` et `latency_ms` ;
+   - métriques : `probe_success` (gauge 0/1), `probe_latency_seconds` (histogram), `probe_failures_total{stage="token|key|payment"}`, `probe_success_ratio` (gauge 0–1 : part des réussites parmi les 60 derniers résultats, la fenêtre de `/status` ; NaN avant la première sonde ; tracée telle quelle par Grafana, sans calcul côté dashboard) ;
+    - log : `probe.result` avec `ok`, `stage` et `latency_ms` ;
    - `GET /status` : les 60 derniers résultats `[{at, ok, stage, latency_ms}]`, consommés par le dashboard et par le verifier du moteur.
 
 **Budget** : chaque sonde coûte 1 centime, sans retour (un compte par personne). `PROBE` est ouvert à 10 000 €, soit ~57 jours à 172,80 €/jour ; le seed le recrée à chaque base neuve.
