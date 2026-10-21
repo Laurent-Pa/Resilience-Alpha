@@ -9,7 +9,7 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["libs/common", "services/*"]
+members = ["libs/common", "services/*", "detection"]
 
 [dependency-groups]
 dev = [
@@ -41,11 +41,19 @@ extend-immutable-calls = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["resilience_common", "payment_api", "prober"]
+known-first-party = ["resilience_common", "payment_api", "prober", "remediation_engine", "config", "prom", "signing"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib -ra"
-testpaths = ["libs", "services"]
+testpaths = ["libs", "services", "detection"]
+# Paquets first-party trouvés sans installation (dev au pip, sans uv) : pas de PYTHONPATH manuel.
+pythonpath = [
+    "libs/common/src",
+    "services/payment-api/src",
+    "services/prober/src",
+    "services/remediation-engine/src",
+    "detection",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"

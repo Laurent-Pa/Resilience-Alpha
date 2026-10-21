@@ -1,0 +1,16 @@
+[project]
+name = "detection"
+version = "0.1.0"
+description = "Détection d'anomalies (Isolation Forest) sur les métriques Prometheus"
+requires-python = ">=3.12"
+# Versions identiques à l'ancien requirements.txt : model.joblib est un pickle lié à la version de scikit-learn.
+dependencies = [
+    "requests>=2.32",
+    "pandas==2.2.3",
+    "scikit-learn==1.5.2",
+    "joblib==1.4.2",
+]
+
+# Scripts plats (collect/train/detect.py), pas de paquet à installer.
+[tool.uv]
+package = false

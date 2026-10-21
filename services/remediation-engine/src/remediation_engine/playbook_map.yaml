@@ -1,0 +1,14 @@
+# Politique de remédiation : type d'incident -> actions (liste fermée) + critères de vérification.
+# Les timeout_s correspondent au RTO cible (gouvernance). Modifiable sans toucher au code.
+http_flood:
+  actions: [block_ip, recycle_service, kill_db_conns]
+  verify: { probe_ok_consecutive: 3, ledger_check: true, timeout_s: 60 }
+service_down:
+  actions: [recycle_service]
+  verify: { probe_ok_consecutive: 3, ledger_check: true, timeout_s: 45 }
+idp_down:
+  actions: [recycle_service] # cible keycloak
+  verify: { probe_ok_consecutive: 3, ledger_check: false, timeout_s: 90 }
+injection_attempt:
+  actions: [block_ip] # aucune action de disponibilité : rien n'est cassé
+  verify: { ledger_check: true }
