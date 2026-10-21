@@ -20,7 +20,12 @@ scrape_configs:
     static_configs:
       - targets: ['payment-api:8000']
 
-  # --- Exemple de 2e service métier (auth, par ex.) ---
-  # - job_name: 'auth'
-  #   static_configs:
-  #     - targets: ['auth:8080']
+  # --- Sonde synthétique (probe_* : signal métier pour la détection ML) ---
+  - job_name: 'prober'
+    static_configs:
+      - targets: ['prober:8000']
+
+  # --- Moteur de remédiation (incidents_*, remediation_actions_*, MTTD/MTTR) ---
+  - job_name: 'remediation-engine'
+    static_configs:
+      - targets: ['remediation-engine:8000']

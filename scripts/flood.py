@@ -104,6 +104,7 @@ async def main() -> None:
     p.add_argument("--ca", help="bundle CA du WAF")
     p.add_argument("--insecure", action="store_true", help="ne pas vérifier le certificat WAF")
     p.add_argument("-v", "--verbose", action="store_true", help="logguer chaque requête")
+    p.add_argument("--xff", help="X-Forwarded-For simulé (IP source, ex. 8.8.8.8 routable pour block_ip)")
     # mode transfer
     p.add_argument("--base", default=DEFAULT_BASE, help="racine de l'API (mode transfer)")
     p.add_argument("--token-url", default=DEFAULT_TOKEN_URL)
@@ -120,7 +121,9 @@ async def main() -> None:
     tally: Counter = Counter()
     limits = httpx.Limits(max_connections=args.concurrency, max_keepalive_connections=args.concurrency)
     deadline = time.monotonic() + args.duration
-    async with httpx.AsyncClient(verify=verify, limits=limits, timeout=10.0) as client:
+    # --xff : en-tête par défaut sur TOUTES les requêtes -> payment-api enregistre cette IP source.
+    headers_def = {"X-Forwarded-For": args.xff} if args.xff else None
+    async with httpx.AsyncClient(verify=verify, limits=limits, timeout=10.0, headers=headers_def) as client:
         if args.mode == "transfer":
             try:
                 url, body_base, headers, pem, beneficiary = await setup_transfer(client, args)

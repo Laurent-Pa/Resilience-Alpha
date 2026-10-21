@@ -17,6 +17,8 @@ secrets:
     file: ./.secrets/rsa_private_key
   prober_client_secret:
     file: ./.secrets/prober_client_secret
+  webhook_hmac_key:               # HMAC partagé detection <-> remediation-engine
+    file: ./.secrets/webhook_hmac_key
 
 services:
   keycloak:
@@ -97,6 +99,34 @@ services:
     networks:
       - default
       - monitoring
+
+  # Moteur de remédiation (étape 5). Fake executor/verifier en dev : l'orchestration tourne,
+  # les actions sont simulées (le vrai fix Ansible = étape 7). Secret HMAC lu dans /run/secrets.
+  remediation-engine:
+    build:
+      context: .
+      dockerfile: services/remediation-engine/Dockerfile
+    environment:
+      LOG_LEVEL: INFO
+      OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      EXECUTOR: fake
+      VERIFIER: fake
+    secrets: [webhook_hmac_key]
+    ports: ["127.0.0.1:8003:8000"]
+    networks: [default, monitoring]
+
+  # Détection ML : lit Prometheus, poste une alerte signée au moteur quand une anomalie persiste.
+  # Nécessite detection/model.joblib (collect + train une fois, cf. detection/README.md).
+  detection:
+    build:
+      context: .
+      dockerfile: detection/Dockerfile
+    # Bind-mount : model.joblib entraîné sur l'hôte est lu directement, sans rebuild (dev).
+    volumes: ["./detection:/app/detection"]
+    secrets: [webhook_hmac_key]
+    depends_on: [remediation-engine]
+    networks: [default, monitoring]
 
   frontend:
     build:

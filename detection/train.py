@@ -12,8 +12,8 @@
 import joblib
 import pandas as pd
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 import config
 import prom
@@ -42,6 +42,8 @@ def main():
 
     # 3. Entraîner et sauvegarder.
     modele.fit(X)
+    # Remplace le seuil par défaut (-0.5) : predict() renvoie -1 si score < offset_.
+    modele[-1].offset_ = config.SEUIL_SCORE
     joblib.dump({"modele": modele, "colonnes": colonnes}, config.MODEL_FILE)
 
     print(f"✅ Modèle entraîné et sauvegardé dans {config.MODEL_FILE}")

@@ -3,6 +3,7 @@
 # Utilisé par collect.py, train.py et detect.py.
 # ===================================================================
 import requests
+
 import config
 
 

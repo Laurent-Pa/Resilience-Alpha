@@ -12,7 +12,7 @@ PROMETHEUS_URL = "http://prometheus:9090"
 # Le remediation-engine n'est pas encore codé : laisse vide ("") pour
 # juste logguer l'alerte, ou mets son URL quand il existera, par ex :
 # "http://remediation-engine:8000/alerts"   (endpoint + port du handoff)
-REMEDIATION_URL = ""
+REMEDIATION_URL = "http://remediation-engine:8000/alerts"
 
 # Service visé par l'anomalie (champ "target" de l'alerte, cf. alert.schema.json).
 TARGET_SERVICE = "payment-api"
@@ -21,7 +21,7 @@ TARGET_SERVICE = "payment-api"
 # REMEDIATION_URL est défini. Contrat : le secret = contenu du fichier, espaces retirés,
 # encodé UTF-8 — le moteur doit lire le MÊME secret de la même façon.
 # Fichier d'abord (conventions projet /run/secrets), sinon variable d'env WEBHOOK_HMAC_SECRET.
-HMAC_SECRET_FILE = "/run/secrets/webhook_hmac_key"
+HMAC_SECRET_FILE = "/run/secrets/webhook_hmac_key"  # noqa: S105 (chemin du secret, pas le secret)
 
 # --- Les signaux qu'on surveille ---
 # Chaque entrée = un nom de "feature" (colonne) -> une requête PromQL.
@@ -58,6 +58,11 @@ SOURCE_IP_QUERY = "topk(1, sum by (src_ip) (rate(http_requests_by_source_total[1
 # --- Réglages de la boucle de détection ---
 POLL_INTERVAL_SECONDS = 10      # on interroge Prometheus toutes les 10 s
 CONSECUTIVE_ANOMALIES = 3       # nb d'anomalies d'affilée avant de déclencher
+# Seuil du score Isolation Forest : en dessous = anormal. Le défaut de sklearn (-0.5) est trop
+# sensible sur un trafic normal quasi constant (un débit -30 % ou un pic de latence suffisent).
+# Les scores saturent : variation normale jusqu'à ~-0.64, attaque ~-0.68 à -0.70 (mesuré).
+# À revérifier après chaque réentraînement sur de nouvelles données.
+SEUIL_SCORE = -0.66
                                 # (évite de réagir à un simple hoquet)
 
 # --- Fichiers produits ---
