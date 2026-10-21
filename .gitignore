@@ -25,3 +25,4 @@ web/**/dist/
 # Vault & Keycloak
 */init-response
 **/certs/
+vault/init-response.json
