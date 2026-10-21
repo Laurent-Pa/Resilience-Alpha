@@ -76,6 +76,9 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_started
+    networks:               # monitoring : pour que Prometheus (réseau monitoring) scrape /metrics
+      - default
+      - monitoring
 
   # En dev, pas de WAF : la sonde tape payment-api directement (en prod : https://192.168.137.1).
   prober:
