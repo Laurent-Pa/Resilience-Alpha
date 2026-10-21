@@ -337,7 +337,7 @@
           "admin"
         ],
         "summary": "List All Payments",
-        "description": "Vue back-office : tous les virements, tous émetteurs/destinataires confondus\n(contrairement à GET /payments, qui ne renvoie que l'historique de l'appelant).\n\nL'IBAN n'est jamais exposé qu'au format masqué (`Payment.dst_iban_masked`,\nex. \"FR****8995\") : c'est la seule forme stockée en base, il n'y a donc rien\nà filtrer ici.",
+        "description": "Vue back-office : les virements, tous émetteurs/destinataires confondus\n(contrairement à GET /payments, qui ne renvoie que l'historique de l'appelant).\n\nLe trafic de la sonde est écarté par défaut : elle émet un virement toutes les\nquelques secondes et noierait la liste. `include_prober=true` le réintègre.\n\nL'IBAN n'est jamais exposé qu'au format masqué (`AdminPayment.dst_iban_masked`,\nex. \"FR****8995\") : c'est la seule forme stockée en base, il n'y a donc rien\nà filtrer ici.",
         "operationId": "list_all_payments_api_admin_payments_get",
         "security": [
           {
@@ -367,6 +367,16 @@
               "default": 20,
               "title": "Page Size"
             }
+          },
+          {
+            "name": "include_prober",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Prober"
+            }
           }
         ],
         "responses": {
@@ -391,6 +401,33 @@
             }
           }
         }
+      }
+    },
+    "/api/admin/prober/success-rate": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Prober Success Rate",
+        "description": "SLI de la sonde : taux de réussite par minute sur la dernière heure complète.\n\nCalculé sur les virements réellement enregistrés, rapportés à la cadence nominale de\nla sonde (PROBER_INTERVAL_S). Une sonde arrêtée ou en échec n'écrit rien : ses\nminutes ressortent à 0 %, ce qui est le signal attendu.\n\nPas de log ici : le dashboard interroge cet endpoint en boucle.",
+        "operationId": "prober_success_rate_api_admin_prober_success_rate_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProberSuccessRate"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     }
   },
@@ -440,6 +477,73 @@
           "balance"
         ],
         "title": "Account"
+      },
+      "AdminPayment": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "src_account": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Src Account"
+          },
+          "dst_account": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Dst Account"
+          },
+          "dst_iban_masked": {
+            "type": "string",
+            "title": "Dst Iban Masked",
+            "examples": [
+              "FR****8995"
+            ]
+          },
+          "amount": {
+            "type": "string",
+            "title": "Amount",
+            "examples": [
+              "50.05"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "COMPLETED",
+              "REJECTED"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "initiated_by": {
+            "type": "string",
+            "enum": [
+              "user",
+              "prober"
+            ],
+            "title": "Initiated By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "src_account",
+          "dst_account",
+          "dst_iban_masked",
+          "amount",
+          "status",
+          "created_at",
+          "initiated_by"
+        ],
+        "title": "AdminPayment",
+        "description": "Vue back-office : ajoute l'origine de l'opération, sans intérêt pour le client\net donc absente de `Payment`."
       },
       "ErrorDetail": {
         "properties": {
@@ -585,7 +689,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/Payment"
+              "$ref": "#/components/schemas/AdminPayment"
             },
             "type": "array",
             "title": "Items"
@@ -611,7 +715,67 @@
           "page_size"
         ],
         "title": "PaymentPage",
-        "description": "Page de résultats pour la vue admin (/admin/payments) : tous les virements,\ntous émetteurs/destinataires confondus, avec pagination."
+        "description": "Page de résultats pour la vue admin (/admin/payments) : les virements, tous\németteurs/destinataires confondus, avec pagination."
+      },
+      "ProberMinute": {
+        "properties": {
+          "minute": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Minute",
+            "description": "Début de la minute (UTC)"
+          },
+          "success_count": {
+            "type": "integer",
+            "title": "Success Count",
+            "description": "Virements de la sonde réussis dans la minute"
+          },
+          "expected_count": {
+            "type": "number",
+            "title": "Expected Count",
+            "description": "Virements attendus : 60 / intervalle de la sonde"
+          },
+          "success_pct": {
+            "type": "number",
+            "title": "Success Pct",
+            "description": "Taux de réussite en %, plafonné à 100"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minute",
+          "success_count",
+          "expected_count",
+          "success_pct"
+        ],
+        "title": "ProberMinute"
+      },
+      "ProberSuccessRate": {
+        "properties": {
+          "interval_s": {
+            "type": "number",
+            "title": "Interval S"
+          },
+          "window_minutes": {
+            "type": "integer",
+            "title": "Window Minutes"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/ProberMinute"
+            },
+            "type": "array",
+            "title": "Points"
+          }
+        },
+        "type": "object",
+        "required": [
+          "interval_s",
+          "window_minutes",
+          "points"
+        ],
+        "title": "ProberSuccessRate",
+        "description": "SLI de la sonde : une entrée par minute complète, de la plus ancienne à la plus\nrécente. Le dénominateur suppose la cadence nominale de la sonde (`interval_s`)."
       },
       "PublicKey": {
         "properties": {

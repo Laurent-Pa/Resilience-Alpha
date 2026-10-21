@@ -22,23 +22,31 @@ resilience-alpha/
 │       ├── src/resilience_common/
 │       └── tests/
 ├── services/
-│   └── payment-api/
+│   ├── payment-api/
+│   │   ├── pyproject.toml
+│   │   ├── Dockerfile
+│   │   ├── alembic.ini
+│   │   ├── migrations/
+│   │   ├── src/payment_api/
+│   │   │   ├── main.py             # create_app() — uvicorn --factory
+│   │   │   ├── settings.py         # pydantic-settings, secrets lus depuis $SECRETS_DIR
+│   │   │   ├── api/                # payments.py, accounts.py, admin.py
+│   │   │   ├── domain/             # règles pures : rules.py, iban.py, bic.py
+│   │   │   ├── repo/               # accounts.py, transactions.py, ledger.py
+│   │   │   ├── service.py          # cas d'usage transactionnel (virement)
+│   │   │   ├── crypto.py           # déchiffrement hybride RSA-OAEP + AES-GCM, HMAC IBAN
+│   │   │   ├── models.py, db.py, schemas.py
+│   │   │   ├── bootstrap.py        # migrations + seed au démarrage
+│   │   │   ├── export_openapi.py
+│   │   │   └── seed.py             # comptes fictifs, idempotent
+│   │   └── tests/
+│   └── prober/
 │       ├── pyproject.toml
 │       ├── Dockerfile
-│       ├── alembic.ini
-│       ├── migrations/
-│       ├── src/payment_api/
-│       │   ├── main.py             # create_app() — uvicorn --factory
-│       │   ├── settings.py         # pydantic-settings, secrets lus depuis $SECRETS_DIR
-│       │   ├── api/                # payments.py, accounts.py, admin.py
-│       │   ├── domain/             # règles pures : rules.py, iban.py, bic.py
-│       │   ├── repo/               # accounts.py, transactions.py, ledger.py
-│       │   ├── service.py          # cas d'usage transactionnel (virement)
-│       │   ├── crypto.py           # déchiffrement hybride RSA-OAEP + AES-GCM, HMAC IBAN
-│       │   ├── models.py, db.py, schemas.py
-│       │   ├── bootstrap.py        # migrations + seed au démarrage
-│       │   ├── export_openapi.py
-│       │   └── seed.py             # comptes fictifs, idempotent
+│       ├── src/prober/
+│       │   ├── main.py              # serveur FastAPI : /metrics, /status
+│       │   ├── probe.py             # boucle async : token → clé publique → virement 1 centime
+│       │   └── settings.py
 │       └── tests/
 ├── frontend/                       # app de paiement (Next.js), servie sous `/`
 │   ├── app/
@@ -60,7 +68,7 @@ resilience-alpha/
          └── prometheus.yml      # cibles désignées par le nom du conteneur Docker + Port
 ```
 
-`services/prober`, `services/remediation-engine` et `frontend-attack/` ne sont pas encore créés dans ce dépôt (voir `.claude/CLAUDE.md` §11-12 pour le plan). L'authentification Keycloak/OIDC côté frontend n'est pas encore implémentée : c'est la prochaine étape, sur une branche dédiée.
+`services/remediation-engine` et `frontend-attack/` ne sont pas encore créés dans ce dépôt (voir `.claude/CLAUDE.md` §9 et suivants pour le plan). `services/prober` est implémenté et testé. L'authentification Keycloak/OIDC côté frontend n'est pas encore implémentée : c'est la prochaine étape, sur une branche dédiée.
 
 ## Prérequis
 
@@ -80,6 +88,9 @@ openssl rand -hex 32 > .secrets/db_password
 openssl rand -hex 32 > .secrets/iban_hmac_key
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
 openssl rand -hex 16 | tr -d '\n' > .secrets/grafana_admin_password
+openssl rand -hex 32 > .secrets/prober_client_secret
+openssl rand -hex 32 > .secrets/remediation_client_secret
+openssl rand -base64 24 > .secrets/test_users_password
 ```
 
 **Variante PowerShell** (Windows), à lancer depuis la racine du dépôt. Elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
@@ -96,6 +107,19 @@ Set-Content .secrets/iban_hmac_key             (New-Secret 32)          -NoNewli
 Set-Content .secrets/prober_client_secret      (New-Secret 32)          -NoNewline -Encoding ascii
 Set-Content .secrets/remediation_client_secret (New-Secret 32)          -NoNewline -Encoding ascii
 Set-Content .secrets/test_users_password       (New-Secret 12 -Base64)  -NoNewline -Encoding ascii
+
+**Variante Bash**  à lancer depuis la racine du dépôt. Elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
+```bash
+cat > .secrets/keycloak.env <<EOF
+KC_BOOTSTRAP_ADMIN_USERNAME=admin
+KC_BOOTSTRAP_ADMIN_PASSWORD=ChangeMoi123!
+PROBER_CLIENT_SECRET=$(cat .secrets/prober_client_secret | tr -d '[:space:]')
+REMEDIATION_CLIENT_SECRET=$(cat .secrets/remediation_client_secret | tr -d '[:space:]')
+TEST_USERS_PASSWORD=$(cat .secrets/test_users_password | tr -d '[:space:]')
+EOF
+```
+
+
 
 # keycloak.env : admin de bootstrap + valeurs des placeholders ${...} du realm
 @(
@@ -231,6 +255,32 @@ Avec le backend et le frontend lancés :
    make check-openapi
    ```
    Échoue si `contracts/openapi-payment.json` diverge de ce que `payment-api` exporte réellement.
+
+## Métriques
+
+Chaque service expose ses métriques au format Prometheus sur `GET /metrics` (port interne `8000`, scrapé par l'infra).
+
+### Communes à tous les services (middleware `resilience_common.metrics`)
+
+| Métrique | Type | Labels |
+| --- | --- | --- |
+| `http_requests_total` | Counter | `method`, `route`, `status` |
+| `http_request_duration_seconds` | Histogram | `method`, `route` |
+
+### `payment-api`
+
+| Métrique | Type | Labels |
+| --- | --- | --- |
+| `payments_total` | Counter | `status` (`completed`, `replayed` ou le code d'erreur, ex. `insufficient_funds`) |
+| `payment_duration_seconds` | Histogram | — |
+
+### `prober`
+
+| Métrique | Type | Labels |
+| --- | --- | --- |
+| `probe_success` | Gauge (0/1) | — |
+| `probe_latency_seconds` | Histogram | — |
+| `probe_failures_total` | Counter | `stage` (`token`, `key`, `payment`), initialisé à 0 au démarrage |
 
 ## Commandes utiles
 

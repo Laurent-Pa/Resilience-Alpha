@@ -44,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.oidc_issuer, settings.oidc_jwks_url, settings.oidc_audience
     )
     app.state.pseudonymizer = crypto.pseudonymizer_from(settings)
+    app.state.prober_interval_s = settings.prober_interval_s
     app.state.transfer_cipher, ephemeral = crypto.cipher_from(settings)
     if ephemeral:
         log.warning(

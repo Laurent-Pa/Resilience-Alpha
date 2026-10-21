@@ -86,14 +86,37 @@ class Payment(BaseModel):
     created_at: datetime
 
 
-class PaymentPage(BaseModel):
-    """Page de résultats pour la vue admin (/admin/payments) : tous les virements,
-    tous émetteurs/destinataires confondus, avec pagination."""
+class AdminPayment(Payment):
+    """Vue back-office : ajoute l'origine de l'opération, sans intérêt pour le client
+    et donc absente de `Payment`."""
 
-    items: list[Payment]
+    initiated_by: Literal["user", "prober"]
+
+
+class PaymentPage(BaseModel):
+    """Page de résultats pour la vue admin (/admin/payments) : les virements, tous
+    émetteurs/destinataires confondus, avec pagination."""
+
+    items: list[AdminPayment]
     total: int
     page: int
     page_size: int
+
+
+class ProberMinute(BaseModel):
+    minute: datetime = Field(description="Début de la minute (UTC)")
+    success_count: int = Field(description="Virements de la sonde réussis dans la minute")
+    expected_count: float = Field(description="Virements attendus : 60 / intervalle de la sonde")
+    success_pct: float = Field(description="Taux de réussite en %, plafonné à 100")
+
+
+class ProberSuccessRate(BaseModel):
+    """SLI de la sonde : une entrée par minute complète, de la plus ancienne à la plus
+    récente. Le dénominateur suppose la cadence nominale de la sonde (`interval_s`)."""
+
+    interval_s: float
+    window_minutes: int
+    points: list[ProberMinute]
 
 
 class Account(BaseModel):

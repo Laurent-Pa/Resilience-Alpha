@@ -7,6 +7,7 @@ import { fetchAdminPayments, type AdminPayment } from "@/lib/admin-payments";
 import { PaymentsTable } from "@/components/admin/payments/PaymentsTable";
 import { Pagination } from "@/components/admin/ui/Pagination";
 import { PageSizeSelector } from "@/components/admin/ui/PageSizeSelector";
+import { Toggle } from "@/components/admin/ui/Toggle";
 
 export default function AdminPaymentsPage() {
   return (
@@ -21,6 +22,7 @@ function AdminPaymentsContent() {
   const [items, setItems] = useState<AdminPayment[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [includeProber, setIncludeProber] = useState(false);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ function AdminPaymentsContent() {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await fetchAdminPayments(page, pageSize, accessToken);
+      const data = await fetchAdminPayments(page, pageSize, accessToken, includeProber);
       if (cancelledRef.current) return;
       setItems(data.items);
       setTotal(data.total);
@@ -40,7 +42,7 @@ function AdminPaymentsContent() {
     } finally {
       if (!cancelledRef.current) setIsLoading(false);
     }
-  }, [page, pageSize, accessToken]);
+  }, [page, pageSize, accessToken, includeProber]);
 
   useEffect(() => {
     const cancelledRef = { current: false };
@@ -58,16 +60,31 @@ function AdminPaymentsContent() {
     setPage(1);
   }
 
+  function handleIncludeProberChange(next: boolean) {
+    setIncludeProber(next);
+    // Le total change du tout au tout : la page courante peut ne plus exister.
+    setPage(1);
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <main className="flex-1 p-8">
       <h1 className="text-2xl font-semibold text-[var(--ra-foreground)]">Paiements</h1>
       <p className="mt-1 text-sm text-[var(--ra-input-text)]">
-        Tous les virements effectués, tous émetteurs et destinataires confondus.
+        Les virements effectués, tous émetteurs et destinataires confondus. Les opérations
+        de la sonde de supervision sont masquées par défaut.
       </p>
 
-      <div className="mt-8">
+      <div className="mt-6 flex w-full max-w-[820px] justify-end">
+        <Toggle
+          checked={includeProber}
+          onChange={handleIncludeProberChange}
+          label="Afficher les opérations de la sonde"
+        />
+      </div>
+
+      <div className="mt-4">
         {error ? (
           <p role="alert" className="py-8 text-center text-sm text-[var(--ra-status-alert-text)]">
             {error}
