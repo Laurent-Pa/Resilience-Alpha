@@ -23,5 +23,5 @@ web/**/dist/
 *.log
 
 # Vault & Keycloak
-.init-response
-.certs/
+*/init-response
+**/certs/
