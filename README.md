@@ -8,56 +8,129 @@ Ce dépôt couvre le **pilier développement** (payment-api, frontend, lib parta
 
 ```
 resilience-alpha/
+├── compose.dev.yaml
+├── contracts
+│   └── openapi-payment.json
+├── DEPLOIEMENT-PROD.md
+├── frontend
+│   ├── AGENTS.md
+│   ├── app
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── payment
+│   │       └── page.tsx
+│   ├── Dockerfile
+│   ├── eslint.config.mjs
+│   ├── lib
+│   │   ├── crypto.test.ts
+│   │   ├── crypto.ts
+│   │   ├── format.ts
+│   │   └── payments.ts
+│   ├── next.config.ts
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── README.md
+│   └── tsconfig.json
+├── grafana
+│   └── provisioning
+│       └── datasources
+│           └── datasources.yml
+├── keycloak
+│   ├── certs
+│   │   ├── keycloak.crt
+│   │   ├── keycloak.key
+│   │   └── keycloak.pfx
+│   └── realm-resilience.json
+├── libs
+│   └── common
+│       ├── pyproject.toml
+│       ├── src
+│       │   └── resilience_common
+│       │       ├── auth.py
+│       │       ├── crypto.py
+│       │       ├── health.py
+│       │       ├── hmac.py
+│       │       ├── __init__.py
+│       │       ├── logging.py
+│       │       ├── metrics.py
+│       │       ├── settings.py
+│       │       └── testing.py
+│       └── tests
+│           ├── test_auth.py
+│           ├── test_hmac.py
+│           └── test_observability.py
+├── loki
+│   └── loki-config.yml
+├── Makefile
+├── prometheus
+│   └── prometheus.yml
+├── pyproject.toml
 ├── README.md
-├── Makefile                       # cibles dev : sync, test, lint, export-openapi, seed, dev-up, dev-down
-├── pyproject.toml                 # racine du workspace uv
+├── services
+│   ├── payment-api
+│   │   ├── alembic.ini
+│   │   ├── Dockerfile
+│   │   ├── migrations
+│   │   │   ├── env.py
+│   │   │   ├── script.py.mako
+│   │   │   └── versions
+│   │   │       └── 0001_initial.py
+│   │   ├── pyproject.toml
+│   │   ├── src
+│   │   │   └── payment_api
+│   │   │       ├── api
+│   │   │       │   ├── accounts.py
+│   │   │       │   ├── admin.py
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── payments.py
+│   │   │       ├── bootstrap.py
+│   │   │       ├── crypto.py
+│   │   │       ├── db.py
+│   │   │       ├── domain
+│   │   │       │   ├── bic.py
+│   │   │       │   ├── iban.py
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── rules.py
+│   │   │       ├── export_openapi.py
+│   │   │       ├── __init__.py
+│   │   │       ├── main.py
+│   │   │       ├── models.py
+│   │   │       ├── repo
+│   │   │       │   ├── accounts.py
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── ledger.py
+│   │   │       │   └── transactions.py
+│   │   │       ├── schemas.py
+│   │   │       ├── seed.py
+│   │   │       ├── service.py
+│   │   │       └── settings.py
+│   │   └── tests
+│   │       ├── conftest.py
+│   │       ├── test_crypto.py
+│   │       ├── test_payments.py
+│   │       └── test_rules.py
+│   └── prober
+│       ├── Dockerfile
+│       ├── pyproject.toml
+│       ├── src
+│       │   └── prober
+│       │       ├── __init__.py
+│       │       ├── main.py
+│       │       ├── probe.py
+│       │       └── settings.py
+│       └── tests
+│           └── test_probe.py
 ├── uv.lock
-├── compose.dev.yaml                # stack de dev locale : postgres + payment-api
-├── .secrets/                       # secrets locaux non commités (voir compose.dev.yaml)
-├── contracts/
-│   └── openapi-payment.json        # exporté depuis payment-api (make export-openapi)
-├── libs/
-│   └── common/                     # package resilience_common (logging, metrics, health, auth, hmac, settings)
-│       ├── pyproject.toml
-│       ├── src/resilience_common/
-│       └── tests/
-├── services/
-│   └── payment-api/
-│       ├── pyproject.toml
-│       ├── Dockerfile
-│       ├── alembic.ini
-│       ├── migrations/
-│       ├── src/payment_api/
-│       │   ├── main.py             # create_app() — uvicorn --factory
-│       │   ├── settings.py         # pydantic-settings, secrets lus depuis $SECRETS_DIR
-│       │   ├── api/                # payments.py, accounts.py, admin.py
-│       │   ├── domain/             # règles pures : rules.py, iban.py, bic.py
-│       │   ├── repo/               # accounts.py, transactions.py, ledger.py
-│       │   ├── service.py          # cas d'usage transactionnel (virement)
-│       │   ├── crypto.py           # déchiffrement hybride RSA-OAEP + AES-GCM, HMAC IBAN
-│       │   ├── models.py, db.py, schemas.py
-│       │   ├── bootstrap.py        # migrations + seed au démarrage
-│       │   ├── export_openapi.py
-│       │   └── seed.py             # comptes fictifs, idempotent
-│       └── tests/
-├── frontend/                       # app de paiement (Next.js), servie sous `/`
-│   ├── app/
-│   │   ├── page.tsx                 # accueil
-│   │   └── payment/page.tsx         # formulaire de virement
-│   ├── lib/
-│   │   ├── crypto.ts                # chiffrement hybride RSA-OAEP + AES-GCM (contrat §7)
-│   │   ├── crypto.test.ts           # tests Vitest
-│   │   ├── payments.ts              # client API (clé publique, virement, retry sur decryption_failed)
-│   │   └── format.ts                # formatage IBAN, conversion euros/centimes
-│   ├── .env.example                 # à copier en .env.local (gitignoré)
-│   └── Dockerfile
-└── observability
-    ├── grafana/ provisioning/datasources
-    │   └── datasources.yml          # sources de données pour brancher Prometheus et Loki
-    ├── loki
-    │    └── loki-config.yml      # version minimale, mono-instance, stockage local              
-    └── prometheus
-         └── prometheus.yml      # cibles désignées par le nom du conteneur Docker + Port      
+└── vault
+    ├── certs
+    │   ├── vault.crt
+    │   └── vault.key
+    ├── config.hcl
+    ├── generate-vault-cert.sh
+    ├── init-response.json
+    └── init-secrets.sh      
 ```
 
 `services/prober`, `services/remediation-engine` et `frontend-attack/` ne sont pas encore créés dans ce dépôt (voir `.claude/CLAUDE.md` §11-12 pour le plan). L'authentification Keycloak/OIDC côté frontend n'est pas encore implémentée : c'est la prochaine étape, sur une branche dédiée.
