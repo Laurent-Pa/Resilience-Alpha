@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payment_api.db import get_session
+from payment_api.models import INITIATED_BY_PROBER
 from payment_api.repo import ledger as ledger_repo
 from payment_api.repo import transactions as tx_repo
-from payment_api.schemas import LedgerCheck, Payment, PaymentPage
+from payment_api.schemas import AdminPayment, LedgerCheck, PaymentPage
 from resilience_common.auth import require_role
 
 log = structlog.get_logger()
@@ -31,19 +32,32 @@ async def list_all_payments(
     session: Session,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200, alias="page_size")] = 20,
+    include_prober: bool = False,
 ) -> PaymentPage:
-    """Vue back-office : tous les virements, tous émetteurs/destinataires confondus
+    """Vue back-office : les virements, tous émetteurs/destinataires confondus
     (contrairement à GET /payments, qui ne renvoie que l'historique de l'appelant).
 
-    L'IBAN n'est jamais exposé qu'au format masqué (`Payment.dst_iban_masked`,
+    Le trafic de la sonde est écarté par défaut : elle émet un virement toutes les
+    quelques secondes et noierait la liste. `include_prober=true` le réintègre.
+
+    L'IBAN n'est jamais exposé qu'au format masqué (`AdminPayment.dst_iban_masked`,
     ex. "FR****8995") : c'est la seule forme stockée en base, il n'y a donc rien
     à filtrer ici."""
+    excluded = None if include_prober else INITIATED_BY_PROBER
     offset = (page - 1) * page_size
-    total = await tx_repo.count_all(session)
-    txs = await tx_repo.list_all(session, limit=page_size, offset=offset)
-    log.info("admin.payments.list", page=page, page_size=page_size, total=total)
+    total = await tx_repo.count_all(session, exclude_initiated_by=excluded)
+    txs = await tx_repo.list_all(
+        session, limit=page_size, offset=offset, exclude_initiated_by=excluded
+    )
+    log.info(
+        "admin.payments.list",
+        page=page,
+        page_size=page_size,
+        total=total,
+        include_prober=include_prober,
+    )
     return PaymentPage(
-        items=[Payment.model_validate(t) for t in txs],
+        items=[AdminPayment.model_validate(t) for t in txs],
         total=total,
         page=page,
         page_size=page_size,

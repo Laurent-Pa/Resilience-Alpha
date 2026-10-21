@@ -29,6 +29,10 @@ STATUS_REJECTED = "REJECTED"
 # sans toucher au code. Sert à écarter le trafic synthétique de la vue admin.
 INITIATED_BY_USER = "user"
 INITIATED_BY_PROBER = "prober"
+# À garder aligné avec la contrainte CHECK de `Transaction`. Permet d'exprimer « toutes
+# les origines sauf X » en égalités : un `!=` sur la colonne de tête de
+# `ix_transactions_initiated_created` ne sait pas utiliser l'index.
+INITIATED_BY_VALUES = (INITIATED_BY_USER, INITIATED_BY_PROBER)
 
 
 def utcnow() -> datetime:

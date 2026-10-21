@@ -62,9 +62,7 @@ async def create_transfer(
 ) -> Payment:
     # Origine de l'opération : le rôle realm du jeton, et non l'UUID du compte émetteur.
     # Seule cette couche voit les rôles, d'où la décision prise ici et passée en aval.
-    initiated_by = (
-        INITIATED_BY_PROBER if INITIATED_BY_PROBER in claims.roles else INITIATED_BY_USER
-    )
+    initiated_by = INITIATED_BY_PROBER if INITIATED_BY_PROBER in claims.roles else INITIATED_BY_USER
     start = time.perf_counter()
     try:
         # Les coordonnées en clair ne vivent que dans ce bloc et ne sont jamais journalisées.

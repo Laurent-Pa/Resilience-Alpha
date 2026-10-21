@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from payment_api.domain import iban
 from payment_api.domain.rules import TransferRequest
-from payment_api.models import Account, LedgerEntry, Transaction
+from payment_api.models import INITIATED_BY_VALUES, Account, LedgerEntry, Transaction
 
 
 async def get_by_key(s: AsyncSession, key: str) -> Transaction | None:
@@ -67,14 +67,32 @@ async def history(s: AsyncSession, user: UUID, account_ids: list[UUID], limit: i
     return list(await s.scalars(stmt))
 
 
-async def list_all(s: AsyncSession, limit: int, offset: int) -> list[Transaction]:
-    """Vue admin : tous les virements, tous émetteurs/destinataires confondus.
-    `Payment.dst_iban_masked` (seule forme d'IBAN exposée) reste masquée comme
+def _kept_origins(excluded: str) -> list[str]:
+    """Les origines à conserver, en `IN (...)` plutôt qu'en `!=` : seule la forme en
+    égalités sait utiliser `ix_transactions_initiated_created`, et la sonde domine
+    vite la table."""
+    return [v for v in INITIATED_BY_VALUES if v != excluded]
+
+
+async def list_all(
+    s: AsyncSession, limit: int, offset: int, exclude_initiated_by: str | None = None
+) -> list[Transaction]:
+    """Vue admin : les virements, tous émetteurs/destinataires confondus.
+    `exclude_initiated_by` écarte une origine (la sonde, par défaut côté API).
+    `AdminPayment.dst_iban_masked` (seule forme d'IBAN exposée) reste masquée comme
     pour les autres vues ; aucun IBAN en clair n'est jamais stocké ni renvoyé."""
-    stmt = select(Transaction).order_by(Transaction.created_at.desc()).limit(limit).offset(offset)
+    stmt = select(Transaction)
+    if exclude_initiated_by is not None:
+        stmt = stmt.where(Transaction.initiated_by.in_(_kept_origins(exclude_initiated_by)))
+    stmt = stmt.order_by(Transaction.created_at.desc()).limit(limit).offset(offset)
     return list(await s.scalars(stmt))
 
 
-async def count_all(s: AsyncSession) -> int:
-    total = await s.scalar(select(func.count()).select_from(Transaction))
+async def count_all(s: AsyncSession, exclude_initiated_by: str | None = None) -> int:
+    """Même filtre que `list_all` : sinon la pagination compterait des lignes que la
+    liste n'affiche pas."""
+    stmt = select(func.count()).select_from(Transaction)
+    if exclude_initiated_by is not None:
+        stmt = stmt.where(Transaction.initiated_by.in_(_kept_origins(exclude_initiated_by)))
+    total = await s.scalar(stmt)
     return int(total or 0)
