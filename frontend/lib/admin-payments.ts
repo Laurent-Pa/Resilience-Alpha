@@ -13,6 +13,8 @@ export interface AdminPayment {
   amount: string; // euros, ex. "50.05"
   status: "COMPLETED" | "REJECTED";
   created_at: string;
+  // Origine de l'opération ; "prober" = trafic de la sonde de supervision.
+  initiated_by: "user" | "prober";
 }
 
 export interface AdminPaymentPage {
@@ -22,12 +24,19 @@ export interface AdminPaymentPage {
   page_size: number;
 }
 
+/**
+ * Le trafic de la sonde est exclu par défaut côté API : `includeProber` ne sert qu'à
+ * le réafficher ponctuellement (débogage).
+ */
 export async function fetchAdminPayments(
   page: number,
   pageSize: number,
-  accessToken: string | null
+  accessToken: string | null,
+  includeProber = false
 ): Promise<AdminPaymentPage> {
-  const url = `${ADMIN_API_BASE}/payments?page=${page}&page_size=${pageSize}`;
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (includeProber) params.set("include_prober", "true");
+  const url = `${ADMIN_API_BASE}/payments?${params}`;
   const res = await fetch(url, {
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
   });
