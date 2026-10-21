@@ -4,8 +4,9 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from prometheus_client import REGISTRY
 
-from prober.probe import Prober
+from prober.probe import RESULTS_WINDOW, Prober
 from prober.settings import Settings
 
 
@@ -110,3 +111,28 @@ async def test_401_drops_cached_token(make_prober):
     assert not (await prober.probe_once())["ok"]
     assert (await prober.probe_once())["ok"]
     assert backend.calls["token"] == 2
+
+
+# La jauge est globale au processus : on la lit juste après la sonde de l'instance testée.
+
+
+def _ratio() -> float | None:
+    return REGISTRY.get_sample_value("probe_success_ratio")
+
+
+async def test_success_ratio_over_recent_results(make_prober):
+    responses = [(201, {"id": "x"}), (503, {}), (201, {"id": "x"}), (201, {"id": "x"})]
+    prober = make_prober(FakeBackend(transfer_responses=responses))
+    for _ in responses:
+        await prober.probe_once()
+    assert _ratio() == 0.75
+
+
+async def test_success_ratio_forgets_results_beyond_window(make_prober):
+    """Fenêtre glissante, pas un cumul : un échec ancien finit par sortir du ratio."""
+    prober = make_prober(FakeBackend(transfer_responses=[(503, {}), (201, {"id": "x"})]))
+    await prober.probe_once()
+    assert _ratio() == 0.0
+    for _ in range(RESULTS_WINDOW):
+        await prober.probe_once()
+    assert _ratio() == 1.0
