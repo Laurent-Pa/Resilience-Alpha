@@ -1,0 +1,16 @@
+# ===================================================================
+# BLACKBOX EXPORTER — sonde HTTP générique.
+# Transforme un simple endpoint de healthcheck (qui ne parle pas le
+# format Prometheus) en métrique `probe_success` (1 = up, 0 = down).
+# Utilisé pour frontend (Next.js) et waf (nginx), qui n'exposent pas
+# de /metrics. Keycloak, lui, a de vraies métriques natives (voir
+# prometheus.yml, job "keycloak") : pas besoin de blackbox pour lui.
+# ===================================================================
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_status_codes: []   # défaut : toute réponse 2xx est considérée "up"
+      preferred_ip_protocol: "ip4"
