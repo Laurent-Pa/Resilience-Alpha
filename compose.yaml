@@ -171,7 +171,7 @@ services:
     networks: [backend, edge, monitoring]
 
   # Second facteur facial du back-office. /internal : Keycloak seulement (jamais routé par
-  # le WAF) ; /api/biometrics : page Biométrie du back-office (JWT ops, audience face-auth).
+  # le WAF) ; aucune route publique.
   face-auth:
     <<: *restart
     build:
@@ -184,6 +184,8 @@ services:
       OIDC_ISSUER: https://${PUBLIC_HOST}/auth/realms/resilience
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
       CORS_ORIGINS: '["https://${PUBLIC_HOST}"]'
+      # Échecs consécutifs avant verrou de 5 min (défaut code : 2, consigne du sujet).
+      MAX_FAILURES: "5"
     secrets: [face_service_token, biometric_key, db_password]
     depends_on:
       postgres:
@@ -202,7 +204,6 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: /api/payments
         NEXT_PUBLIC_ADMIN_API_BASE_URL: /api/admin
-        NEXT_PUBLIC_BIOMETRICS_API_BASE_URL: /api/biometrics
         NEXT_PUBLIC_OIDC_AUTHORITY: https://${PUBLIC_HOST}/auth/realms/resilience
         NEXT_PUBLIC_ADMIN_OIDC_CLIENT_ID: web-ops
     container_name: ra-frontend

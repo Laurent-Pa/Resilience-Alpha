@@ -139,13 +139,6 @@ class Biometrics:
         log.info("face.enrolled", username=username, enrolled_by=by)
         return enrollment
 
-    async def revoke(self, username: str, by: str) -> bool:
-        deleted = await self.store.delete_enrollment(username)
-        if deleted:
-            ENROLLMENTS.labels("revoke").inc()
-            log.info("face.revoked", username=username, revoked_by=by)
-        return deleted
-
     async def unlock(self, username: str, by: str) -> None:
         await self.store.set_lock(username, lockout.LockState())
         log.info("face.unlocked", username=username, unlocked_by=by)

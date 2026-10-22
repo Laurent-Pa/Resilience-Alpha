@@ -7,18 +7,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from face_auth import __version__
-from face_auth.api import admin, internal
+from face_auth.api import internal
 from face_auth.crypto import TemplateCipher
 from face_auth.engine import Engine, FaceEngine
 from face_auth.service import Biometrics
 from face_auth.settings import Settings
 from face_auth.store import MemoryStore, PgStore, Store
-from resilience_common.auth import TokenVerifier
 from resilience_common.health import health_router
 from resilience_common.logging import RequestContextMiddleware, configure_logging
 from resilience_common.metrics import MetricsMiddleware, metrics_router
-
-API_PREFIX = "/api"
 
 
 def _secret(value) -> str:
@@ -68,14 +65,11 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     app = FastAPI(
         title="face-auth",
         version=__version__,
-        description="Second facteur facial du back-office : enrôlement et vérification.",
+        description="Second facteur facial du back-office : vérification (appelée par Keycloak).",
         lifespan=lifespan,
     )
     app.state.biometrics = bio
     app.state.service_token = _secret(settings.face_service_token).encode()
-    app.state.token_verifier = TokenVerifier(
-        settings.oidc_issuer, settings.oidc_jwks_url, settings.oidc_audience
-    )
 
     app.add_middleware(MetricsMiddleware)
     app.add_middleware(RequestContextMiddleware)
@@ -90,5 +84,4 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     app.include_router(health_router({"db": bio.store.ping}))
     app.include_router(metrics_router())
     app.include_router(internal.router)
-    app.include_router(admin.router, prefix=API_PREFIX)
     return app

@@ -7,7 +7,6 @@ import { useAdminAuth } from "@/app/admin/AdminAuthContext";
 const NAV_LINKS = [
   { href: "/admin/payments", label: "Payment" },
   { href: "/admin/monitoring", label: "Monitoring" },
-  { href: "/admin/biometrics", label: "Biométrie" },
 ];
 
 export function Sidebar() {

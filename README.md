@@ -312,22 +312,47 @@ pas la caméra. Composants :
 - `keycloak/face-authenticator/` : authenticator Keycloak (Java, compilé par `keycloak/Dockerfile` :
   rien à installer sur l'hôte) et sa page caméra ; flux `browser-face` du realm ;
 - `services/face-auth/` (port local `8004`) : reconnaissance (OpenCV YuNet + SFace), empreintes
-  chiffrées en base (schéma `biometrics`), verrouillage, journal des tentatives ;
-- page **Biométrie** du back-office (`/admin/biometrics`) : enrôler, révoquer, déverrouiller.
+  chiffrées en base (schéma `biometrics`), verrouillage, journal des tentatives (table + logs `face.verify`) ;
 
-Règles : visage non reconnu → retour à l'identifiant vide, caméra éteinte ; 2 échecs consécutifs →
-identifiant bloqué 5 min. Une capture sans visage ne compte pas. face-auth injoignable → refus.
+Règles : visage non reconnu → retour à l'identifiant vide, caméra éteinte ; `MAX_FAILURES` échecs
+consécutifs (2 par défaut, 5 dans `compose.yaml`) → identifiant bloqué 5 min. Une capture sans visage
+ne compte pas. face-auth injoignable → refus.
 
-**Premier enrôlement** (le back-office exige déjà le visage ; la stack doit tourner) : depuis le
+**Fonctionnement de la reconnaissance (IA embarquée, locale, sur CPU, sans service externe) :**
+
+1. Après l'identifiant, Keycloak affiche la page caméra ; le navigateur capture une image
+   (JPEG 480×360) et la poste à Keycloak, qui la transmet à `face-auth` (`POST /internal/verify`,
+   jeton de service, réseau Docker interne).
+2. **YuNet** (réseau de neurones de détection) localise le visage ; **SFace** (réseau de
+   reconnaissance) le transforme en empreinte de 128 nombres. Les deux modèles ONNX (~39 Mo,
+   Apache 2.0) sont téléchargés dans l'image au build.
+3. Cette empreinte est comparée (similarité cosinus, seuil 0.363) à celle enrôlée pour l'identifiant.
+   Aucune image n'est conservée ; l'empreinte enrôlée est chiffrée en AES-256-GCM (`biometric_key`).
+
+**Retour du résultat.** `face-auth` répond à Keycloak un verdict : `match`, `no_match` /
+`not_enrolled` (comptés, réponse identique : on ne révèle pas qui est enrôlé), `locked`, ou
+`no_face` / `invalid_image` (non comptés). L'authenticator Java en déduit l'étape suivante : `match`
+→ page du mot de passe ; sinon page « Visage non reconnu » (ou « bloqué jusqu'à… ») puis retour à
+l'identifiant vide. Chaque tentative (issue, score) est journalisée (table `biometrics.attempts`, logs `face.verify`).
+
+**Objet connecté (ESP8266, LED bicolore) — pas encore branché.** Les événements à signaler sont
+déjà tous connus d'`face-auth` / de l'authenticator : visage reconnu (vert clignotant jusqu'au mot
+de passe), non reconnu (rouge fixe 30 s), mot de passe validé (vert fixe 30 s) ou refusé (rouge ×10).
+Il reste à les pousser vers l'ESP (HTTP/MQTT sur le point d'accès) : point d'accroche naturel =
+l'issue renvoyée par `/internal/verify` pour reconnu / non reconnu, et les événements Keycloak
+`LOGIN` / `LOGIN_ERROR` pour le mot de passe.
+
+**Enrôlement** (la stack doit tourner) : depuis le
 conteneur, avec une photo de face de l'opérateur, seul sur l'image :
 
 ```bash
-docker compose -f compose.dev.yaml cp photo.jpg face-auth:/tmp/photo.jpg
-docker compose -f compose.dev.yaml exec face-auth python -m face_auth.enroll operator /tmp/photo.jpg
+# dev : préfixer par -f compose.dev.yaml ; PC Hôte (prod) : conteneur ra-face-auth
+docker cp photo.jpg ra-face-auth:/tmp/photo.jpg
+docker exec ra-face-auth python -m face_auth.enroll operator /tmp/photo.jpg
 ```
 
-Les enrôlements suivants se font depuis la page Biométrie (webcam du poste). Le navigateur n'ouvre
-la caméra qu'en contexte sécurisé : `https://` (WAF) ou `http://localhost`.
+L'enrôlement (et son remplacement) se fait uniquement par cette commande ; pas d'interface. Le
+navigateur n'ouvre la caméra qu'en contexte sécurisé : `https://` (WAF) ou `http://localhost`.
 
 ### 5. Arrêt
 

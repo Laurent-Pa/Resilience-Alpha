@@ -1,12 +1,10 @@
 """Enrôlement en ligne de commande : amorce le premier opérateur.
 
-Le back-office exige déjà le visage pour s'y connecter : le tout premier enrôlement se
-fait donc hors back-office, depuis le conteneur, avec une photo du titulaire :
+L'enrôlement (et le remplacement) d'un visage se fait uniquement ici, depuis le conteneur,
+avec une photo du titulaire :
 
     docker compose cp photo.jpg face-auth:/tmp/photo.jpg
     docker compose exec face-auth python -m face_auth.enroll operator /tmp/photo.jpg
-
-Les suivants passent par la page « Biométrie » du back-office.
 """
 
 import argparse

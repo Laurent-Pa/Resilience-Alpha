@@ -74,7 +74,6 @@ server {
     set $frontend    http://frontend:3000;
     set $payment_api http://payment-api:8000;
     set $remediation http://remediation-engine:8000;
-    set $face_auth   http://face-auth:8000;
     set $keycloak    http://keycloak:8080;
 
     proxy_http_version 1.1;
@@ -104,12 +103,6 @@ server {
     # --- payment-api : sans réécriture de chemin -----------------------------------------
     location ~ ^/api/(payments|accounts|admin)(/|$) {
         proxy_pass $payment_api;
-    }
-
-    # --- face-auth : /api/biometrics seulement. /internal (réservé à Keycloak) n'est
-    # volontairement pas routé : il retombe sur le frontend (404).
-    location ^~ /api/biometrics {
-        proxy_pass $face_auth;
     }
 
     # --- remediation-engine : préfixe /api/remediation retiré ----------------------------

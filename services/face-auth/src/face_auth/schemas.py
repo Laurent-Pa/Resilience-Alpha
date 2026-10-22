@@ -47,19 +47,3 @@ class VerifyOut(BaseModel):
 class StatusOut(BaseModel):
     locked_until: datetime | None
     attempts_left: int
-
-
-class UserOut(BaseModel):
-    username: str
-    enrolled: bool
-    enrolled_at: datetime | None
-    enrolled_by: str | None
-    failures: int
-    locked_until: datetime | None
-
-
-class AttemptOut(BaseModel):
-    username: str
-    at: datetime
-    outcome: str
-    score: float | None

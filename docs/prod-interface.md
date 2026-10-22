@@ -123,7 +123,7 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 - **Build** : `services/face-auth/Dockerfile`, **contexte = racine du dépôt**. Les modèles ONNX
   (YuNet, SFace) sont téléchargés **au build**, figés par sha256 : rien n'est téléchargé au démarrage.
 - **Env** : `DB_HOST=postgres` (schéma `biometrics`, créé au démarrage), `OIDC_ISSUER` (public),
-  `OIDC_JWKS_URL` (interne). `CORS_ORIGINS` inutile derrière le WAF (même origine).
+  `OIDC_JWKS_URL` (interne). Aucune route publique : face-auth n'est joignable que par Keycloak.
 - **Secrets** : `face_service_token`, `biometric_key`, `db_password`. Sans les deux premiers :
   **démarrage refusé**. `biometric_key` est **immuable** (sinon les empreintes ne se déchiffrent
   plus : il faut ré-enrôler).
@@ -146,7 +146,6 @@ Base `resilience_common.ServiceSettings` — s'applique à payment-api, prober, 
 | `/api/payments`, `/api/accounts`, `/api/admin` | payment-api:8000 | **sans réécriture** |
 | `/api/remediation` | remediation-engine:8000 | **avec réécriture** `/api/remediation/* → /*` (tranché : les routes du moteur restent à la racine, comme `/health` et `/metrics`). **Ne pas publier `/alerts`** : Alertmanager et `detection` l'appellent en interne. |
 | `/auth` | keycloak:8080 | `KC_HTTP_RELATIVE_PATH=/auth` |
-| `/api/biometrics` | face-auth:8000 | **sans réécriture**. **Ne jamais publier `/internal`** (appelé par Keycloak seul). Corps jusqu'à ~3 Mo (image en base64) |
 
 **Le WAF doit poser** : `X-Forwarded-For` / `X-Real-IP` (source de `src_ip` — **sans eux, la détection d'IP et `block_ip` ne fonctionnent pas**) et `X-Request-ID` (devient `trace_id`). Seul le WAF est publié ; tout le reste sur réseaux Docker internes.
 

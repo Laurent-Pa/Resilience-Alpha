@@ -1,8 +1,7 @@
-"""face-auth : verrouillage, chiffrement des empreintes, routes internes (Keycloak) et admin."""
+"""face-auth : verrouillage, chiffrement des empreintes, routes internes (Keycloak)."""
 
 import base64
 import os
-import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -16,8 +15,6 @@ from face_auth.crypto import TemplateCipher
 from face_auth.engine import FaceError
 from face_auth.main import create_app
 from face_auth.settings import Settings
-from resilience_common.auth import TokenVerifier
-from resilience_common.testing import JwksServer, RsaKey, make_token
 
 TOKEN = "kc-face-token"
 KEY_HEX = "00" * 32
@@ -157,74 +154,6 @@ async def test_rejects_invalid_payloads():
         assert (await c.post("/internal/verify", json=body, headers=INTERNAL)).status_code == 422
         body = {"username": "bad name!", "image": b64(b"face:x")}
         assert (await c.post("/internal/verify", json=body, headers=INTERNAL)).status_code == 422
-
-
-# --- Routes admin (back-office, rôle ops) -------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def jwks():
-    key = RsaKey()
-    with JwksServer([key]) as server:
-        yield key, server
-
-
-def _admin_app(jwks):
-    key, server = jwks
-    app = _app()
-    app.state.token_verifier = TokenVerifier(ISSUER, server.url, "face-auth")
-
-    def auth(roles):
-        token = make_token(
-            key,
-            sub=uuid.uuid4(),
-            roles=roles,
-            issuer=ISSUER,
-            audience="face-auth",
-            preferred_username="boss",
-        )
-        return {"Authorization": f"Bearer {token}"}
-
-    return app, auth
-
-
-async def test_admin_requires_ops(jwks):
-    app, auth = _admin_app(jwks)
-    async with _client(app) as c:
-        assert (await c.get("/api/biometrics/users")).status_code == 401
-        assert (await c.get("/api/biometrics/users", headers=auth(["client"]))).status_code == 403
-
-
-async def test_admin_enroll_list_unlock_revoke(jwks):
-    app, auth = _admin_app(jwks)
-    ops = auth(["ops"])
-    async with _client(app) as c:
-        url = "/api/biometrics/users/operator/face"
-        r = await c.put(
-            url, json={"image": "data:image/jpeg;base64," + b64(b"face:op")}, headers=ops
-        )
-        assert r.status_code == 201 and r.json()["enrolled_by"] == "boss"
-        r = await c.put(url, json={"image": b64(b"two")}, headers=ops)
-        assert r.status_code == 422 and r.json()["detail"]["code"] == "multiple_faces"
-
-        for _ in range(2):
-            await _verify(c, "operator", b"face:intrus")
-        users = (await c.get("/api/biometrics/users", headers=ops)).json()
-        assert [u["username"] for u in users] == ["operator"]
-        assert users[0]["enrolled"] and users[0]["locked_until"] is not None
-        assert "template" not in users[0]
-
-        assert (
-            await c.post("/api/biometrics/users/operator/unlock", headers=ops)
-        ).status_code == 204
-        assert (await _verify(c, "operator", b"face:op"))["match"] is True
-
-        attempts = (await c.get("/api/biometrics/attempts?limit=2", headers=ops)).json()
-        assert [a["outcome"] for a in attempts] == ["match", "no_match"]
-
-        assert (await c.delete(url, headers=ops)).status_code == 204
-        assert (await c.delete(url, headers=ops)).status_code == 404
-        assert (await _verify(c, "operator", b"face:op"))["outcome"] == "not_enrolled"
 
 
 # --- Moteur réel (modèles ONNX présents : image Docker, ou FACE_MODELS_DIR en local) -------

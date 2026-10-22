@@ -71,7 +71,7 @@
         <div role="alert" style="margin-bottom:1rem">
           <#if faceMode == "rejected">
             <p><strong>Visage non reconnu.</strong></p>
-            <p>Vous pouvez recommencer une fois avant un blocage de 5 minutes.</p>
+            <p>Essai(s) restant(s) avant un blocage de 5 minutes : ${faceAttemptsLeft}.</p>
           <#elseif faceMode == "locked">
             <p><strong>Identifiant bloqué.</strong></p>
             <p>Trop d'échecs de reconnaissance faciale. Nouvel essai possible à

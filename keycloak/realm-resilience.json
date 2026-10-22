@@ -186,6 +186,17 @@
       "credentials": [{ "type": "password", "value": "${TEST_USERS_PASSWORD}", "temporary": false }]
     },
     {
+      "id": "77777777-7777-4777-8777-777777777777",
+      "username": "operator-laurent",
+      "email": "operator-laurent@resilience.test",
+      "emailVerified": true,
+      "firstName": "Laurent",
+      "lastName": "Operator",
+      "enabled": true,
+      "realmRoles": ["ops", "default-roles-resilience"],
+      "credentials": [{ "type": "password", "value": "${TEST_USERS_PASSWORD}", "temporary": false }]
+    },
+    {
       "id": "55555555-5555-4555-8555-555555555555",
       "username": "service-account-prober",
       "enabled": true,

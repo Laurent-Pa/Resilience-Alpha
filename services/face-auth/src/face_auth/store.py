@@ -37,14 +37,10 @@ class Store(Protocol):
     async def close(self) -> None: ...
     async def ping(self) -> None: ...
     async def get_enrollment(self, username: str) -> Enrollment | None: ...
-    async def list_enrollments(self) -> list[Enrollment]: ...
     async def save_enrollment(self, e: Enrollment) -> None: ...
-    async def delete_enrollment(self, username: str) -> bool: ...
     async def get_lock(self, username: str) -> LockState: ...
     async def set_lock(self, username: str, state: LockState) -> None: ...
-    async def list_locks(self) -> dict[str, LockState]: ...
     async def add_attempt(self, a: Attempt) -> None: ...
-    async def recent_attempts(self, limit: int) -> list[Attempt]: ...
 
 
 class MemoryStore:
@@ -65,14 +61,8 @@ class MemoryStore:
     async def get_enrollment(self, username: str) -> Enrollment | None:
         return self.enrollments.get(username)
 
-    async def list_enrollments(self) -> list[Enrollment]:
-        return sorted(self.enrollments.values(), key=lambda e: e.username)
-
     async def save_enrollment(self, e: Enrollment) -> None:
         self.enrollments[e.username] = e
-
-    async def delete_enrollment(self, username: str) -> bool:
-        return self.enrollments.pop(username, None) is not None
 
     async def get_lock(self, username: str) -> LockState:
         return self.locks.get(username, LockState())
@@ -80,14 +70,8 @@ class MemoryStore:
     async def set_lock(self, username: str, state: LockState) -> None:
         self.locks[username] = state
 
-    async def list_locks(self) -> dict[str, LockState]:
-        return dict(self.locks)
-
     async def add_attempt(self, a: Attempt) -> None:
         self.attempts.append(a)
-
-    async def recent_attempts(self, limit: int) -> list[Attempt]:
-        return list(reversed(self.attempts[-limit:]))
 
 
 DDL = """
@@ -139,10 +123,6 @@ class PgStore:
         )
         return self._enrollment(r) if r else None
 
-    async def list_enrollments(self) -> list[Enrollment]:
-        rows = await self.pool.fetch("SELECT * FROM biometrics.enrollments ORDER BY username")
-        return [self._enrollment(r) for r in rows]
-
     async def save_enrollment(self, e: Enrollment) -> None:
         await self.pool.execute(
             "INSERT INTO biometrics.enrollments (username, template, enrolled_at, enrolled_by)"
@@ -153,12 +133,6 @@ class PgStore:
             e.enrolled_at,
             e.enrolled_by,
         )
-
-    async def delete_enrollment(self, username: str) -> bool:
-        res = await self.pool.execute(
-            "DELETE FROM biometrics.enrollments WHERE username = $1", username
-        )
-        return res != "DELETE 0"
 
     async def get_lock(self, username: str) -> LockState:
         r = await self.pool.fetchrow(
@@ -175,10 +149,6 @@ class PgStore:
             state.locked_until,
         )
 
-    async def list_locks(self) -> dict[str, LockState]:
-        rows = await self.pool.fetch("SELECT * FROM biometrics.lockouts")
-        return {r["username"]: LockState(r["failures"], r["locked_until"]) for r in rows}
-
     async def add_attempt(self, a: Attempt) -> None:
         await self.pool.execute(
             "INSERT INTO biometrics.attempts (username, at, outcome, score)"
@@ -188,14 +158,6 @@ class PgStore:
             a.outcome,
             a.score,
         )
-
-    async def recent_attempts(self, limit: int) -> list[Attempt]:
-        rows = await self.pool.fetch(
-            "SELECT username, at, outcome, score FROM biometrics.attempts"
-            " ORDER BY at DESC, id DESC LIMIT $1",
-            limit,
-        )
-        return [Attempt(r["username"], r["at"], r["outcome"], r["score"]) for r in rows]
 
 
 def now() -> datetime:
