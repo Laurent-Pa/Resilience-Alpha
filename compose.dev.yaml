@@ -1,0 +1,294 @@
+# Environnement de développement LOCAL minimal (pas la prod : compose.yaml est géré par l'infra).
+# Prérequis : fichiers dans ./.secrets/ (gitignored), par exemple :
+#   mkdir -p .secrets
+#   openssl rand -hex 16 > .secrets/db_password
+#   openssl rand -hex 32 > .secrets/iban_hmac_key
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
+#   echo <secret du client prober dans Keycloak> > .secrets/prober_client_secret
+# Keycloak lit ses secrets depuis ./.secrets/keycloak.env (PROBER_CLIENT_SECRET,
+# REMEDIATION_CLIENT_SECRET, TEST_USERS_PASSWORD, KC_BOOTSTRAP_ADMIN_*).
+# Keycloak sert en HTTPS (:8443) : générer un certificat auto-signé avec
+#   ./keycloak/generate-keycloak-cert.sh
+# avant le premier `make dev-up` (dossier ./keycloak/certs/ gitignoré, comme ./vault/certs/).
+
+secrets:
+  db_password:
+    file: ./.secrets/db_password
+  iban_hmac_key:
+    file: ./.secrets/iban_hmac_key
+  rsa_private_key:
+    file: ./.secrets/rsa_private_key
+  prober_client_secret:
+    file: ./.secrets/prober_client_secret
+  grafana_admin_password:
+    file: ./.secrets/grafana_admin_password
+  webhook_hmac_key:               # HMAC partagé detection <-> remediation-engine
+    file: ./.secrets/webhook_hmac_key
+  remediation_client_secret:      # = REMEDIATION_CLIENT_SECRET de keycloak.env
+    file: ./.secrets/remediation_client_secret
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0
+    command: ["start", "--import-realm"]
+    # Secrets (bootstrap admin + ${...} du realm) : ./.secrets/keycloak.env, gitignored.
+    # Le générer depuis les fichiers .secrets/ : voir le README / les instructions de l'étape 2.
+    env_file: ./.secrets/keycloak.env
+    environment:
+      KC_HTTP_RELATIVE_PATH: /auth
+      # iss figé à KC_HOSTNAME pour TOUS les jetons (y compris le token du prober récupéré
+      # en interne via keycloak:8080). Pas de backchannel dynamique en dev, sinon l'iss varie
+      # selon l'hôte appelant et payment-api rejette (piège iss, §13). Le JWKS reste interne
+      # car payment-api a OIDC_JWKS_URL en dur et n'utilise pas le discovery.
+      # Le /auth doit être DANS KC_HOSTNAME : en KC26 l'iss dérive de KC_HOSTNAME sans y
+      # réappliquer KC_HTTP_RELATIVE_PATH. Cohérent avec la prod (KC_HOSTNAME=.../auth, §6).
+      # endpoint en HTTP interne (keycloak:8080, jamais exposé à l'hôte).
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: https://localhost:8443/auth
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      # Certificat auto-signé généré par ./keycloak/generate-keycloak-cert.sh (gitignoré,
+      # comme ./vault/certs). Sans ces deux variables, `start` (mode non-dev) ne trouve pas
+      # de configuration TLS et le conteneur ne démarre pas.
+      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/keycloak.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+      - ./keycloak/certs:/opt/keycloak/certs
+    ports: ["127.0.0.1:8443:8443"]
+    networks:               # monitoring : pour que Prometheus scrape les métriques natives (port 9000)
+      - default
+      - monitoring
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: resilience
+      POSTGRES_USER: payment_app
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_app -d resilience"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+    networks:
+      - default
+      - monitoring
+
+  payment-api:
+    build:
+      context: .
+      dockerfile: services/payment-api/Dockerfile
+    environment:
+      DB_HOST: postgres
+      LOG_LEVEL: INFO
+      # En dev, l'hôte "public" est localhost:8443 en HTTPS (pas de WAF), aligné sur
+      # KC_HOSTNAME du service keycloak. Le JWKS reste interne (§6).
+      OIDC_ISSUER: https://localhost:8443/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      # localhost et 127.0.0.1 sont deux origines distinctes pour le navigateur (Docker Desktop ouvre 127.0.0.1).
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      VAULT_ADDR: https://vault:8200
+      VAULT_SKIP_VERIFY: "true"
+    secrets: [db_password, iban_hmac_key, rsa_private_key]
+    ports: ["127.0.0.1:8001:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    networks:               # monitoring : pour que Prometheus (réseau monitoring) scrape /metrics
+      - default
+      - monitoring
+
+  # En dev, pas de WAF : la sonde tape payment-api directement (en prod : https://192.168.137.1).
+  prober:
+    build:
+      context: .
+      dockerfile: services/prober/Dockerfile
+    environment:
+      TARGET_URL: http://payment-api:8000
+      KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
+      VAULT_ADDR: https://vault:8200
+      VAULT_SKIP_VERIFY: "true"
+    secrets: [prober_client_secret]
+    ports: ["127.0.0.1:8002:8000"]
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+    networks:
+      - default
+      - monitoring
+
+  # Moteur de remédiation. En dev : actions simulées (EXECUTOR=fake, pas de playbooks infra),
+  # mais vérification RÉELLE (sondes du prober + ledger_check avec jeton ops) et persistance
+  # Postgres (schéma `remediation`). Prod : EXECUTOR=ansible + playbooks montés dans /playbooks.
+  remediation-engine:
+    build:
+      context: .
+      dockerfile: services/remediation-engine/Dockerfile
+    environment:
+      LOG_LEVEL: INFO
+      OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      EXECUTOR: fake
+      VERIFIER: real
+      # En dev, pas de WAF : le ledger est lu directement sur payment-api.
+      LEDGER_URL: http://payment-api:8000/api/admin/ledger/check
+      KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
+      DB_HOST: postgres
+    secrets: [webhook_hmac_key, remediation_client_secret, db_password]
+    ports: ["127.0.0.1:8003:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [default, monitoring]
+
+  # Détection ML : lit Prometheus, poste une alerte signée au moteur quand une anomalie persiste.
+  # Nécessite detection/model.joblib (collect + train une fois, cf. detection/README.md).
+  detection:
+    build:
+      context: .
+      dockerfile: detection/Dockerfile
+    # Bind-mount : model.joblib entraîné sur l'hôte est lu directement, sans rebuild (dev).
+    volumes: ["./detection:/app/detection"]
+    secrets: [webhook_hmac_key]
+    depends_on: [remediation-engine]
+    networks: [default, monitoring]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8001/api/payments
+        NEXT_PUBLIC_OIDC_AUTHORITY: https://localhost:8443/auth/realms/resilience
+        NEXT_PUBLIC_ADMIN_API_BASE_URL: http://localhost:8001/api/admin
+        # Client Keycloak du back-office (rôle ops requis), même realm que web-pay.
+        NEXT_PUBLIC_ADMIN_OIDC_CLIENT_ID: web-ops
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      - payment-api
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+    networks:               # monitoring : pour que blackbox-exporter sonde sa page d'accueil
+      - default
+      - monitoring
+
+  # ---------------------------------------------------------------
+  # PROMETHEUS — collecte et stocke les métriques
+  # ---------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+
+  # ---------------------------------------------------------------
+  # LOKI — stocke et indexe les logs
+  # ---------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: loki
+    restart: unless-stopped
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "3100:3100"
+    networks:
+      - monitoring
+
+  # ---------------------------------------------------------------
+  # GRAFANA — tableaux de bord
+  # ---------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - monitoring
+
+  # ---------------------------------------------------------------
+  # BLACKBOX EXPORTER — sonde HTTP générique (frontend, waf en prod ;
+  # en dev il n'y a pas de waf, seul le job "frontend" répondra).
+  # ---------------------------------------------------------------
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks:
+      - monitoring
+
+  vault:
+    image: hashicorp/vault:latest
+    environment:
+      VAULT_API_ADDR: https://vault:8200
+      VAULT_ADDRESS: https://vault:8200
+      # Accepter les certificats auto-signés en interne
+      VAULT_SKIP_VERIFY: "true"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault_data:/vault/file
+      - ./vault/config.hcl:/vault/config.hcl:ro
+      - ./vault/init-secrets.sh:/vault/init-secrets.sh:ro
+      - ./vault/certs:/vault/certs/:ro
+    ports:
+      - "127.0.0.1:8200:8200"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+    command: vault server -config=/vault/config.hcl
+    networks:
+      - default
+      - monitoring
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  vault_data:
+
+# -----------------------------------------------------------------
+# RÉSEAU
+# Ce réseau "monitoring" devra être PARTAGÉ avec les conteneurs
+# métier (api, db, auth...) lors de la fusion sur le PC Hôte,
+# pour que Prometheus puisse les scraper par leur nom.
+# -----------------------------------------------------------------
+
+networks:
+  default: {}
+  monitoring:
+    external: false

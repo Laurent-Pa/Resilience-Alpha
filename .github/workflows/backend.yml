@@ -1,0 +1,46 @@
+name: backend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "libs/**"
+      - "services/**"
+      - "contracts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
+      - "Makefile"
+      - ".github/workflows/backend.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --locked
+      - name: Lint
+        run: make lint
+      - name: OpenAPI à jour dans contracts/
+        run: make check-openapi
+      # testcontainers démarre Postgres sur le Docker du runner.
+      - name: Tests
+        run: uv run pytest
+
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [payment-api, prober]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.service }}
+        run: docker build -f services/${{ matrix.service }}/Dockerfile .

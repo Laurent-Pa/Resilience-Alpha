@@ -1,0 +1,57 @@
+# ===================================================================
+# CONFIGURATION PROMETHEUS
+# Chaque "job" = une cible à surveiller.
+# Les cibles sont désignées par le NOM DU CONTENEUR Docker + le port.
+# ===================================================================
+global:
+  scrape_interval: 15s        # Prometheus interroge ses cibles toutes les 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # --- Prometheus se surveille lui-même (utile pour vérifier qu'il tourne) ---
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # --- L'API MÉTIER (équipe DEV) ---
+
+  - job_name: 'payment-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['payment-api:8000']
+
+  # --- Sonde synthétique (probe_* : signal métier pour la détection ML) ---
+  - job_name: 'prober'
+    static_configs:
+      - targets: ['prober:8000']
+
+  # --- Moteur de remédiation (incidents_*, remediation_actions_*, MTTD/MTTR) ---
+  - job_name: 'remediation-engine'
+    static_configs:
+      - targets: ['remediation-engine:8000']
+
+  # --- Keycloak : métriques Prometheus natives sur l'interface de management (port 9000,
+  # indépendant de KC_HTTP_RELATIVE_PATH=/auth qui ne s'applique qu'au port 8080) ---
+  - job_name: 'keycloak'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['keycloak:9000']
+
+  # --- Healthchecks via blackbox-exporter (services sans /metrics natif) ---
+  # frontend : page d'accueil Next.js (même sonde que le HEALTHCHECK du conteneur).
+  # waf : /healthz interne nginx (même endpoint que le HEALTHCHECK du conteneur, port 8080).
+  - job_name: 'blackbox-http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://frontend:3000/
+          - http://waf:8080/healthz
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

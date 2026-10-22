@@ -1,0 +1,35 @@
+# Secrets : jamais commités
+.secrets/
+.env
+.env.*
+# ... sauf les modèles, sans valeur secrète (racine et frontend/)
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Front
+node_modules/
+web/**/dist/
+
+# Divers
+.DS_Store
+*.log
+.claude/SESSION-NOTES.md
+
+# Proxy L4 Windows : binaire nginx (zip nginx.org) et journaux/pid d'exécution
+tools/
+edge/logs/
+
+# Vault, Keycloak, PKI de labo (certs/ à la racine : clé privée de la CA)
+*/init-response
+**/certs/
+vault/init-response.json
