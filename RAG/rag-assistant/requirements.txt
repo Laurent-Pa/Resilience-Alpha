@@ -1,0 +1,10 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+langchain-core>=0.3,<0.4
+langchain-ollama>=0.2,<1.0
+langchain-chroma>=0.1,<1.0
+langchain-text-splitters>=0.3,<0.4
+chromadb>=0.5,<1.0
+python-frontmatter>=1.1,<2.0
+prometheus-client>=0.20,<1.0
+pydantic>=2.7,<3.0
