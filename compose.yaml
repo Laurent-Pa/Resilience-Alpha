@@ -37,6 +37,10 @@ secrets:
     file: ./.secrets/webhook_hmac_key
   grafana_admin_password:
     file: ./.secrets/grafana_admin_password
+  face_service_token:
+    file: ./.secrets/face_service_token
+  biometric_key:
+    file: ./.secrets/biometric_key
 
 services:
   # -----------------------------------------------------------------------------------
@@ -100,7 +104,8 @@ services:
   # -----------------------------------------------------------------------------------
   keycloak:
     <<: *restart
-    image: quay.io/keycloak/keycloak:26.8.0
+    # Image officielle + authenticator « reconnaissance faciale » (étape caméra du rôle ops).
+    build: ./keycloak
     container_name: ra-keycloak
     command: ["start", "--import-realm"]
     # Bootstrap admin + valeurs des ${...} du realm (PROBER_CLIENT_SECRET, ...).
@@ -119,6 +124,9 @@ services:
       # à l'import. Le realm n'est importé que s'il n'existe pas : base H2 interne au
       # conteneur, donc à chaque recréation du conteneur.
       PUBLIC_HOST: ${PUBLIC_HOST}
+      # Étape caméra des comptes ops : appel interne à face-auth (fail-closed si injoignable).
+      FACE_AUTH_URL: http://face-auth:8000
+    secrets: [face_service_token]
     volumes:
       - ./keycloak/realm-resilience.json:/opt/keycloak/data/import/realm-resilience.json:ro
     healthcheck:
@@ -157,6 +165,28 @@ services:
       # Le front est servi par le WAF sur la même origine : CORS ne sert qu'en filet.
       CORS_ORIGINS: '["https://${PUBLIC_HOST}"]'
     secrets: [db_password, iban_hmac_key, rsa_private_key]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, edge, monitoring]
+
+  # Second facteur facial du back-office. /internal : Keycloak seulement (jamais routé par
+  # le WAF) ; aucune route publique.
+  face-auth:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: services/face-auth/Dockerfile
+    container_name: ra-face-auth
+    environment:
+      LOG_LEVEL: INFO
+      DB_HOST: postgres
+      OIDC_ISSUER: https://${PUBLIC_HOST}/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      CORS_ORIGINS: '["https://${PUBLIC_HOST}"]'
+      # Échecs consécutifs avant verrou de 5 min (défaut code : 2, consigne du sujet).
+      MAX_FAILURES: "5"
+    secrets: [face_service_token, biometric_key, db_password]
     depends_on:
       postgres:
         condition: service_healthy

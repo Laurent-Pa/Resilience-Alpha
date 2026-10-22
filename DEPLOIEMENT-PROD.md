@@ -66,6 +66,7 @@ Le realm `keycloak/realm-resilience.json` contient des **placeholders** (`${PROB
 - **Routage WAF** :
   - `/` → frontend (paiement, et back-office sous `/admin`, client Keycloak `web-ops`) ;
   - `/api/payments`, `/api/accounts`, `/api/admin` → payment-api (sans réécriture) ;
+  - face-auth n'est pas routé (`/internal` réservé à Keycloak, réseau Docker interne) ;
   - `/api/remediation/*` → remediation-engine (**préfixe retiré**, cf. `docs/prod-interface.md` §5) ;
   - `/auth` → keycloak.
 - Le WAF pose `X-Request-ID`, `X-Forwarded-For` / `X-Real-IP` (exploités dans les logs, §5 du handoff),

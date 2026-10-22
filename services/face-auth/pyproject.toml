@@ -1,0 +1,22 @@
+[project]
+name = "face-auth"
+version = "0.1.0"
+description = "Reconnaissance faciale du back-office : enrôlement, vérification, verrouillage"
+requires-python = ">=3.12"
+dependencies = [
+    "resilience-common",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "asyncpg>=0.30",
+    "cryptography>=43",
+    "numpy>=1.26",
+    # YuNet (détection) + SFace (empreinte) : FaceDetectorYN / FaceRecognizerSF, OpenCV >= 4.8.
+    "opencv-python-headless>=4.8",
+]
+
+[tool.uv.sources]
+resilience-common = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"

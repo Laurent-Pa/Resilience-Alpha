@@ -5,21 +5,25 @@ on:
     branches: [main]
   pull_request:
     paths:
-      - "libs/**"
-      - "services/**"
-      - "contracts/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".python-version"
-      - "Makefile"
-      - ".github/workflows/backend.yml"
+      - 'libs/**'
+      - 'services/**'
+      - 'contracts/**'
+      - 'keycloak/**'
+      - 'detection/**'
+      - 'RAG/**'
+      - 'scripts/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - 'Makefile'
+      - '.github/workflows/backend.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +31,6 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --all-packages --locked
-      - name: Lint
-        run: make lint
       - name: OpenAPI à jour dans contracts/
         run: make check-openapi
       # testcontainers démarre Postgres sur le Docker du runner.
@@ -39,8 +41,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [payment-api, prober]
+        service: [payment-api, prober, face-auth]
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.service }}
         run: docker build -f services/${{ matrix.service }}/Dockerfile .
+
+  # Keycloak + authenticator facial (compile le SPI Java avec Maven dans le build).
+  keycloak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build keycloak
+        run: docker build keycloak

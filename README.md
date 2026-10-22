@@ -206,7 +206,7 @@ resilience-alpha/
 
 ### 1. Secrets locaux
 
-`payment-api` lit ses secrets depuis des fichiers (jamais en clair dans le code ni dans un `.env` commité). Pour le développement local, créer le dossier `.secrets/` à la racine (gitignoré) :
+`payment-api` lit ses secrets depuis des fichiers (jamais en clair dans le code ni dans un `.env` commité). Pour le développement local, créer le dossier `.secrets/` à la racine (gitignoré). **Variante Bash** (Git Bash), à lancer depuis la racine du dépôt ; elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
 
 ```bash
 mkdir -p .secrets
@@ -219,9 +219,11 @@ openssl rand -hex 32 > .secrets/prober_client_secret
 openssl rand -hex 32 > .secrets/remediation_client_secret
 openssl rand -base64 24 > .secrets/test_users_password
 openssl rand -hex 32 | tr -d '\n' > .secrets/webhook_hmac_key
+openssl rand -hex 32 > .secrets/face_service_token   # Keycloak <-> face-auth (étape caméra des ops)
+openssl rand -hex 32 > .secrets/biometric_key        # chiffrement des empreintes faciales (32 octets hex)
 ```
 
-**Variante PowerShell** (Windows), à lancer depuis la racine du dépôt. Elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
+**Variante PowerShell** (Windows), à lancer depuis la racine du dépôt (alternative à la variante Bash, à ne pas cumuler). Elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
 
 ```powershell
 New-Item -ItemType Directory -Force .secrets | Out-Null
@@ -236,19 +238,9 @@ Set-Content .secrets/webhook_hmac_key          (New-Secret 32)          -NoNewli
 Set-Content .secrets/prober_client_secret      (New-Secret 32)          -NoNewline -Encoding ascii
 Set-Content .secrets/remediation_client_secret (New-Secret 32)          -NoNewline -Encoding ascii
 Set-Content .secrets/test_users_password       (New-Secret 12 -Base64)  -NoNewline -Encoding ascii
-
-**Variante Bash**  à lancer depuis la racine du dépôt. Elle crée aussi les secrets Keycloak et le fichier `keycloak.env` :
-```bash
-cat > .secrets/keycloak.env <<EOF
-KC_BOOTSTRAP_ADMIN_USERNAME=admin
-KC_BOOTSTRAP_ADMIN_PASSWORD=ChangeMoi123!
-PROBER_CLIENT_SECRET=$(cat .secrets/prober_client_secret | tr -d '[:space:]')
-REMEDIATION_CLIENT_SECRET=$(cat .secrets/remediation_client_secret | tr -d '[:space:]')
-TEST_USERS_PASSWORD=$(cat .secrets/test_users_password | tr -d '[:space:]')
-EOF
-```
-
-
+Set-Content .secrets/face_service_token        (New-Secret 32)          -NoNewline -Encoding ascii
+Set-Content .secrets/biometric_key             (New-Secret 32)          -NoNewline -Encoding ascii
+Set-Content .secrets/grafana_admin_password    (New-Secret 16)          -NoNewline -Encoding ascii
 
 # keycloak.env : admin de bootstrap + valeurs des placeholders ${...} du realm
 @(
@@ -262,7 +254,7 @@ EOF
 Get-ChildItem .secrets
 ```
 
-La clé RSA se génère avec `openssl`, depuis Git Bash :
+La clé RSA n'est pas générée par la variante PowerShell : la créer avec `openssl`, depuis Git Bash (déjà incluse dans la variante Bash) :
 
 ```bash
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .secrets/rsa_private_key
@@ -298,7 +290,7 @@ make dev-up
 
 `payment-api` écoute en local sur `127.0.0.1:8001` (mappé vers le port interne `8000`). Au démarrage : migrations Alembic puis seed des comptes fictifs (`alice`, `bob`, `carol`, `PROBE`, `PROBE_SINK`, `bank_reserve`). Prometheus, Loki et Grafana sont des services de ce même `compose.dev.yaml`, pas une stack séparée.
 
-Vérifier que tout est démarré :
+### 3. Vérifier que tout est démarré
 
 ```bash
 docker compose -f compose.dev.yaml ps
@@ -311,14 +303,65 @@ Changer le mot de passe admin Grafana (il n'est lu dans le secret qu'à la créa
 docker exec grafana grafana cli admin reset-admin-password TestPassword123
 ```
 
-Arrêt :
+### 4. Second facteur facial du back-office (rôle `ops`)
+
+Pour tout compte du rôle realm `ops`, la connexion Keycloak se fait en trois pages :
+**identifiant → caméra → mot de passe**. Les autres comptes (`alice`, `bob`, `carol`) ne voient
+pas la caméra. Composants :
+
+- `keycloak/face-authenticator/` : authenticator Keycloak (Java, compilé par `keycloak/Dockerfile` :
+  rien à installer sur l'hôte) et sa page caméra ; flux `browser-face` du realm ;
+- `services/face-auth/` (port local `8004`) : reconnaissance (OpenCV YuNet + SFace), empreintes
+  chiffrées en base (schéma `biometrics`), verrouillage, journal des tentatives (table + logs `face.verify`) ;
+
+Règles : visage non reconnu → retour à l'identifiant vide, caméra éteinte ; `MAX_FAILURES` échecs
+consécutifs (2 par défaut, 5 dans `compose.yaml`) → identifiant bloqué 5 min. Une capture sans visage
+ne compte pas. face-auth injoignable → refus.
+
+**Fonctionnement de la reconnaissance (IA embarquée, locale, sur CPU, sans service externe) :**
+
+1. Après l'identifiant, Keycloak affiche la page caméra ; le navigateur capture une image
+   (JPEG 480×360) et la poste à Keycloak, qui la transmet à `face-auth` (`POST /internal/verify`,
+   jeton de service, réseau Docker interne).
+2. **YuNet** (réseau de neurones de détection) localise le visage ; **SFace** (réseau de
+   reconnaissance) le transforme en empreinte de 128 nombres. Les deux modèles ONNX (~39 Mo,
+   Apache 2.0) sont téléchargés dans l'image au build.
+3. Cette empreinte est comparée (similarité cosinus, seuil 0.363) à celle enrôlée pour l'identifiant.
+   Aucune image n'est conservée ; l'empreinte enrôlée est chiffrée en AES-256-GCM (`biometric_key`).
+
+**Retour du résultat.** `face-auth` répond à Keycloak un verdict : `match`, `no_match` /
+`not_enrolled` (comptés, réponse identique : on ne révèle pas qui est enrôlé), `locked`, ou
+`no_face` / `invalid_image` (non comptés). L'authenticator Java en déduit l'étape suivante : `match`
+→ page du mot de passe ; sinon page « Visage non reconnu » (ou « bloqué jusqu'à… ») puis retour à
+l'identifiant vide. Chaque tentative (issue, score) est journalisée (table `biometrics.attempts`, logs `face.verify`).
+
+**Objet connecté (ESP8266, LED bicolore) — pas encore branché.** Les événements à signaler sont
+déjà tous connus d'`face-auth` / de l'authenticator : visage reconnu (vert clignotant jusqu'au mot
+de passe), non reconnu (rouge fixe 30 s), mot de passe validé (vert fixe 30 s) ou refusé (rouge ×10).
+Il reste à les pousser vers l'ESP (HTTP/MQTT sur le point d'accès) : point d'accroche naturel =
+l'issue renvoyée par `/internal/verify` pour reconnu / non reconnu, et les événements Keycloak
+`LOGIN` / `LOGIN_ERROR` pour le mot de passe.
+
+**Enrôlement** (la stack doit tourner) : depuis le
+conteneur, avec une photo de face de l'opérateur, seul sur l'image :
+
+```bash
+# dev : préfixer par -f compose.dev.yaml ; PC Hôte (prod) : conteneur ra-face-auth
+docker cp photo.jpg ra-face-auth:/tmp/photo.jpg
+docker exec ra-face-auth python -m face_auth.enroll operator /tmp/photo.jpg
+```
+
+L'enrôlement (et son remplacement) se fait uniquement par cette commande ; pas d'interface. Le
+navigateur n'ouvre la caméra qu'en contexte sécurisé : `https://` (WAF) ou `http://localhost`.
+
+### 5. Arrêt
 
 ```bash
 docker compose -f compose.dev.yaml down
 # ou : make dev-down
 ```
 
-### 3. Variables d'environnement utiles (backend)
+### 6. Variables d'environnement utiles (backend)
 
 | Variable       | Rôle                                                        | Défaut dev                       |
 | -------------- | ----------------------------------------------------------- | -------------------------------- |
@@ -393,25 +436,25 @@ Chaque service expose ses métriques au format Prometheus sur `GET /metrics` (po
 
 ### Communes à tous les services (middleware `resilience_common.metrics`)
 
-| Métrique | Type | Labels |
-| --- | --- | --- |
-| `http_requests_total` | Counter | `method`, `route`, `status` |
-| `http_request_duration_seconds` | Histogram | `method`, `route` |
+| Métrique                        | Type      | Labels                      |
+| ------------------------------- | --------- | --------------------------- |
+| `http_requests_total`           | Counter   | `method`, `route`, `status` |
+| `http_request_duration_seconds` | Histogram | `method`, `route`           |
 
 ### `payment-api`
 
-| Métrique | Type | Labels |
-| --- | --- | --- |
-| `payments_total` | Counter | `status` (`completed`, `replayed` ou le code d'erreur, ex. `insufficient_funds`) |
-| `payment_duration_seconds` | Histogram | — |
+| Métrique                   | Type      | Labels                                                                           |
+| -------------------------- | --------- | -------------------------------------------------------------------------------- |
+| `payments_total`           | Counter   | `status` (`completed`, `replayed` ou le code d'erreur, ex. `insufficient_funds`) |
+| `payment_duration_seconds` | Histogram | —                                                                                |
 
 ### `prober`
 
-| Métrique | Type | Labels |
-| --- | --- | --- |
-| `probe_success` | Gauge (0/1) | — |
-| `probe_latency_seconds` | Histogram | — |
-| `probe_failures_total` | Counter | `stage` (`token`, `key`, `payment`), initialisé à 0 au démarrage |
+| Métrique                | Type        | Labels                                                           |
+| ----------------------- | ----------- | ---------------------------------------------------------------- |
+| `probe_success`         | Gauge (0/1) | —                                                                |
+| `probe_latency_seconds` | Histogram   | —                                                                |
+| `probe_failures_total`  | Counter     | `stage` (`token`, `key`, `payment`), initialisé à 0 au démarrage |
 
 ## Commandes utiles
 
