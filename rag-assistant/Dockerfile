@@ -16,6 +16,8 @@ COPY rag-assistant/ .
 RUN useradd -r app && mkdir -p /app/chroma && chown -R app /app
 USER app
 
-# Au démarrage : (ré)indexe si besoin, puis lance l'API.
-# L'index se reconstruit si le dossier chroma est vide (ex. 1er lancement).
-CMD ["sh", "-c", "python -c \"import pathlib,config,sys; sys.exit(0 if any(pathlib.Path(config.PERSIST_DIR).glob('*')) else 1)\" || python ingest.py; python app.py"]
+# Au démarrage : indexe si la collection ne contient aucun document, puis lance l'API.
+# On compte les documents plutôt que de tester si le dossier chroma est vide : l'API crée
+# une base vide au premier /health/ready, et une indexation ratée (Ollama injoignable)
+# ne serait alors plus jamais retentée. Ici, chaque redémarrage la retente.
+CMD ["sh", "-c", "python -c \"import sys,app; sys.exit(0 if app._get_store()._collection.count() > 0 else 1)\" || python ingest.py; python app.py"]

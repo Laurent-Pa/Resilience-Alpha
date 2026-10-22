@@ -168,7 +168,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [backend, edge, monitoring]
+    # llm : pour appeler rag-assistant (POST /api/admin/assistant/ask), seul sur ce réseau.
+    networks: [backend, edge, monitoring, llm]
 
   # Second facteur facial du back-office. /internal : Keycloak seulement (jamais routé par
   # le WAF) ; aucune route publique.
@@ -296,6 +297,46 @@ services:
     networks: [monitoring]
 
   # -----------------------------------------------------------------------------------
+  # Pilier IA : assistant documentaire (RAG). Répond à partir de docs/exploitation/ avec
+  # Ollama, qui tourne sous Windows sur le PC Hôte (hors Docker). Aucune authentification
+  # propre : JAMAIS routé par le WAF. Seul payment-api l'appelle (POST /api/admin/
+  # assistant/ask, rôle ops) via le réseau llm. Contrat : contracts/rag-ask.schema.json.
+  # payment-api n'en dépend pas (pas de depends_on) : le paiement doit fonctionner sans lui.
+  # -----------------------------------------------------------------------------------
+  rag-assistant:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: rag-assistant/Dockerfile
+    container_name: ra-rag-assistant
+    environment:
+      # Ollama sur un autre poste (PC IA) : surcharger OLLAMA_BASE_URL dans .env.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Modèle de génération : surcharger RAG_LLM_MODEL dans .env (ex. llama3.1:8b).
+      LLM_MODEL: ${RAG_LLM_MODEL:-qwen2.5:3b}
+      EMBED_MODEL: nomic-embed-text
+      DOCS_DIR: /app/docs
+      ANONYMIZED_TELEMETRY: "False"        # télémétrie Chroma : inutile, et bruit dans les logs
+    volumes:
+      - ./docs/exploitation:/app/docs:ro   # source documentaire, lecture seule
+      - rag_chroma:/app/chroma             # index vectoriel persistant
+    # Écrit host.docker.internal dans /etc/hosts, sans dépendre du DNS de Docker.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    healthcheck:
+      # Pas de curl dans l'image. /health/ready répond 503 tant que l'index est vide ; au
+      # premier démarrage, l'indexation (embeddings via Ollama) précède l'API.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    # UN SEUL réseau, non interne : payment-api l'y appelle, et Ollama est joint par sa
+    # route par défaut. Rattaché en plus à backend/monitoring (internal), le conteneur
+    # n'avait plus de route vers l'hôte (« Network is unreachable », même avec gw_priority).
+    # Contrepartie : pas de scrape Prometheus de /metrics (Prometheus est sur monitoring).
+    networks: [llm]
+
+  # -----------------------------------------------------------------------------------
   # Observabilité (Prometheus / Loki / Grafana). Réseau dédié "monitoring" : scrape les
   # services métier qui y sont aussi rattachés. Pas de `ports:` public (règle WAF) :
   # bindés en 127.0.0.1 uniquement, comme vault, pour un accès local au PC Hôte.
@@ -356,6 +397,7 @@ volumes:
   prometheus_data:
   loki_data:
   grafana_data:
+  rag_chroma:
 
 networks:
   # Données et appels internes (postgres, keycloak:8080, prober:8000). Sans accès sortant.
@@ -367,6 +409,9 @@ networks:
   # postgres rattachés ci-dessus). internal: true comme backend : pas d'accès sortant.
   monitoring:
     internal: true
+  # rag-assistant et son seul client, payment-api. Non interne : sortie vers Ollama
+  # (host.docker.internal:11434). Ni le WAF ni le frontend n'y sont rattachés.
+  llm: {}
   # Le moteur -> docker-socket-proxy uniquement. Sans accès sortant.
   socketproxy:
     internal: true

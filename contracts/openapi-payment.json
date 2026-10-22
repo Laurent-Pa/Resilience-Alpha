@@ -429,6 +429,83 @@
           }
         ]
       }
+    },
+    "/api/admin/assistant/ask": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Assistant Ask",
+        "description": "Question à l'assistant documentaire (RAG), réservée au rôle ops.\n\nRelais vers rag-assistant sur le réseau Docker interne : l'assistant n'a pas\nd'authentification propre et n'est pas exposé par le WAF. Il répond à partir de\ndocs/exploitation/ en citant ses sources, et n'exécute aucune action.\n\nLa question n'est jamais journalisée (un opérateur peut y coller un message\nd'erreur) : seule sa longueur l'est.",
+        "operationId": "assistant_ask_api_admin_assistant_ask_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantQuestion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Réponse de l'assistant hors contrat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Assistant (ou son LLM) indisponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Assistant trop lent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -544,6 +621,78 @@
         ],
         "title": "AdminPayment",
         "description": "Vue back-office : ajoute l'origine de l'opération, sans intérêt pour le client\net donc absente de `Payment`."
+      },
+      "AssistantAnswer": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer",
+          "sources"
+        ],
+        "title": "AssistantAnswer",
+        "description": "Réponse de l'assistant, rédigée uniquement à partir de docs/exploitation/. Sans\npassage pertinent, `answer` le dit et `sources` est vide (ce n'est pas une erreur)."
+      },
+      "AssistantQuestion": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Question",
+            "description": "Question de l'opérateur ; un message d'erreur collé tel quel convient.",
+            "examples": [
+              "Que faire en cas de flood HTTP sur payment-api ?"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "AssistantQuestion",
+        "description": "Corps de POST /admin/assistant/ask. Mêmes bornes que AskRequest\n(contracts/rag-ask.schema.json) : rien de hors contrat n'est relayé."
+      },
+      "AssistantSource": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Titre du document (frontmatter `titre`)"
+          },
+          "file": {
+            "type": "string",
+            "title": "File",
+            "description": "Chemin relatif à docs/exploitation/",
+            "examples": [
+              "runbooks/RB-01-flood-http.md"
+            ]
+          },
+          "section": {
+            "type": "string",
+            "title": "Section",
+            "description": "Chemin des titres du passage (h1 > h2 > h3)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "file",
+          "section"
+        ],
+        "title": "AssistantSource"
       },
       "ErrorDetail": {
         "properties": {

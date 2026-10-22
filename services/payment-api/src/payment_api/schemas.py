@@ -135,6 +135,36 @@ class LedgerCheck(BaseModel):
     negative_accounts: list[UUID]
 
 
+class AssistantQuestion(BaseModel):
+    """Corps de POST /admin/assistant/ask. Mêmes bornes que AskRequest
+    (contracts/rag-ask.schema.json) : rien de hors contrat n'est relayé."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="Question de l'opérateur ; un message d'erreur collé tel quel convient.",
+        examples=["Que faire en cas de flood HTTP sur payment-api ?"],
+    )
+
+
+class AssistantSource(BaseModel):
+    title: str = Field(description="Titre du document (frontmatter `titre`)")
+    file: str = Field(
+        description="Chemin relatif à docs/exploitation/", examples=["runbooks/RB-01-flood-http.md"]
+    )
+    section: str = Field(description="Chemin des titres du passage (h1 > h2 > h3)")
+
+
+class AssistantAnswer(BaseModel):
+    """Réponse de l'assistant, rédigée uniquement à partir de docs/exploitation/. Sans
+    passage pertinent, `answer` le dit et `sources` est vide (ce n'est pas une erreur)."""
+
+    answer: str
+    sources: list[AssistantSource]
+
+
 class ErrorDetail(BaseModel):
     code: str
     message: str

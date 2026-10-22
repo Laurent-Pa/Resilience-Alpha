@@ -105,6 +105,13 @@ server {
     }
 
     # --- payment-api : sans réécriture de chemin -----------------------------------------
+    # Assistant documentaire (relayé par payment-api vers rag-assistant) : génération LLM sur
+    # le CPU du PC Hôte, ~1 min et jusqu'à 2 min. Le défaut nginx (60 s) couperait la réponse.
+    # Au-delà de 150 s, payment-api a déjà répondu 504 assistant_timeout (délai 120 s).
+    location = /api/admin/assistant/ask {
+        proxy_pass $payment_api;
+        proxy_read_timeout 150s;
+    }
     location ~ ^/api/(payments|accounts|admin)(/|$) {
         proxy_pass $payment_api;
     }

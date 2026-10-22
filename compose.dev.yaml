@@ -187,6 +187,36 @@ services:
         condition: service_healthy
     networks: [default, monitoring]
 
+  # Assistant documentaire RAG (pilier IA) : répond à partir de docs/exploitation/ avec
+  # Ollama, qui tourne sous Windows hors Docker. Appelé par payment-api
+  # (POST /api/admin/assistant/ask, rôle ops). Port publié sur la boucle locale pour tester
+  # POST /ask directement en dev. Contrat : contracts/rag-ask.schema.json.
+  rag-assistant:
+    build:
+      context: .
+      dockerfile: rag-assistant/Dockerfile
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Modèle de génération : surcharger RAG_LLM_MODEL dans .env (ex. llama3.1:8b).
+      LLM_MODEL: ${RAG_LLM_MODEL:-qwen2.5:3b}
+      EMBED_MODEL: nomic-embed-text
+      DOCS_DIR: /app/docs
+      ANONYMIZED_TELEMETRY: "False"        # télémétrie Chroma : inutile, et bruit dans les logs
+    volumes:
+      - ./docs/exploitation:/app/docs:ro   # source documentaire, lecture seule
+      - rag_chroma:/app/chroma             # index vectoriel persistant
+    # Même résolution que sur le PC Hôte, sans dépendre du DNS de Docker.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["127.0.0.1:8004:8000"]
+    healthcheck:
+      # Pas de curl dans l'image. 503 tant que l'index est vide (1er démarrage : indexation).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    networks: [default, monitoring]
+
   frontend:
     build:
       context: ./frontend
@@ -308,6 +338,7 @@ volumes:
   loki_data:
   grafana_data:
   vault_data:
+  rag_chroma:
 
 # -----------------------------------------------------------------
 # RÉSEAU

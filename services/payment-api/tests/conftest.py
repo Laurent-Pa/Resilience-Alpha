@@ -60,6 +60,7 @@ def settings(pg_url, jwks) -> Settings:
 async def app(settings):
     app = create_app(settings)
     yield app
+    await app.state.rag_client.aclose()
     await app.state.engine.dispose()
 
 
