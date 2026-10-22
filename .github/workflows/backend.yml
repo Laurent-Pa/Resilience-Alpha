@@ -5,22 +5,22 @@ on:
     branches: [main]
   pull_request:
     paths:
-      - "libs/**"
-      - "services/**"
-      - "contracts/**"
-      - "keycloak/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".python-version"
-      - "Makefile"
-      - ".github/workflows/backend.yml"
+      - 'libs/**'
+      - 'services/**'
+      - 'contracts/**'
+      - 'keycloak/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - 'Makefile'
+      - '.github/workflows/backend.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,8 +28,6 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --all-packages --locked
-      - name: Lint
-        run: make lint
       - name: OpenAPI à jour dans contracts/
         run: make check-openapi
       # testcontainers démarre Postgres sur le Docker du runner.

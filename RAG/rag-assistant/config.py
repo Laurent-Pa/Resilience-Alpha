@@ -28,8 +28,8 @@ PERSIST_DIR = os.getenv("PERSIST_DIR", "/app/chroma")
 COLLECTION = os.getenv("COLLECTION", "resilience-docs")
 
 # --- Recherche ---
-TOP_K = int(os.getenv("TOP_K", "4"))        # nb de fragments récupérés par question
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))   # taille max d'un fragment (caractères)
+TOP_K = int(os.getenv("TOP_K", "4"))  # nb de fragments récupérés par question
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))  # taille max d'un fragment (caractères)
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
 
 # --- Divers ---
