@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resilience-alpha/contracts/rag-ask.schema.json",
+  "title": "RagAsk",
+  "description": "Échange POST /ask du service rag-assistant (pilier IA). Appelé uniquement par payment-api (POST /api/admin/assistant/ask, rôle ops) sur le réseau Docker interne : rag-assistant n'a pas d'authentification propre et n'est pas exposé par le WAF. Réponses d'erreur : 422 si la requête ne respecte pas AskRequest, 500 si Ollama est injoignable.",
+  "$defs": {
+    "AskRequest": {
+      "title": "AskRequest",
+      "description": "Corps de la requête POST /ask.",
+      "type": "object",
+      "required": ["question"],
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "Question de l'opérateur, en langage naturel. Un message d'erreur collé tel quel est une question valide.",
+          "examples": ["Que faire en cas de flood HTTP sur payment-api ?"]
+        },
+        "top_k": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Nombre de fragments de documentation récupérés. null ou absent : valeur TOP_K du service (4 par défaut)."
+        }
+      }
+    },
+    "AskResponse": {
+      "title": "AskResponse",
+      "description": "Corps de la réponse 200 de POST /ask. Si aucun fragment n'est trouvé, answer le signale et sources est vide : ce n'est pas une erreur.",
+      "type": "object",
+      "required": ["answer", "sources"],
+      "additionalProperties": false,
+      "properties": {
+        "answer": {
+          "type": "string",
+          "description": "Réponse en français, rédigée uniquement à partir des fragments récupérés. Signale une information absente (« je ne trouve pas… ») ou marquée « À compléter par l'équipe » au lieu de l'inventer."
+        },
+        "sources": {
+          "type": "array",
+          "description": "Fragments transmis au modèle, dédoublonnés sur (file, section), dans l'ordre de pertinence.",
+          "items": { "$ref": "#/$defs/Source" }
+        }
+      }
+    },
+    "Source": {
+      "title": "Source",
+      "description": "Passage de docs/exploitation/ cité à l'appui de la réponse.",
+      "type": "object",
+      "required": ["title", "file", "section"],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Champ titre du frontmatter YAML du fichier (à défaut, son chemin).",
+          "examples": ["RB-01 — Flood HTTP / déni de service sur payment-api (incident http_flood)"]
+        },
+        "file": {
+          "type": "string",
+          "description": "Chemin du fichier relatif à docs/exploitation/, séparateur /.",
+          "examples": ["runbooks/RB-01-flood-http.md"]
+        },
+        "section": {
+          "type": "string",
+          "description": "Chemin des titres Markdown du fragment (h1 > h2 > h3) ; à défaut, le titre du fichier.",
+          "examples": ["RB-01 — Flood HTTP / déni de service sur payment-api (incident `http_flood`) > Actions de l'opérateur > L'incident est `ESCALATED`"]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "request": { "question": "Que faire en cas de flood HTTP sur payment-api ?" },
+      "response": {
+        "answer": "Le moteur classe l'alerte en http_flood et exécute block_ip, recycle_service puis kill_db_conns, avant de vérifier la reprise (3 sondes 201 et ledger/check OK). Tant que l'incident est en cours, ne rien faire ; s'il passe en ESCALATED, lire le detail de la transition et appliquer RB-05.",
+        "sources": [
+          {
+            "title": "RB-01 — Flood HTTP / déni de service sur payment-api (incident http_flood)",
+            "file": "runbooks/RB-01-flood-http.md",
+            "section": "RB-01 — Flood HTTP / déni de service sur payment-api (incident `http_flood`) > Ce que fait le système automatiquement"
+          },
+          {
+            "title": "RB-01 — Flood HTTP / déni de service sur payment-api (incident http_flood)",
+            "file": "runbooks/RB-01-flood-http.md",
+            "section": "RB-01 — Flood HTTP / déni de service sur payment-api (incident `http_flood`) > Actions de l'opérateur > L'incident est `ESCALATED`"
+          }
+        ]
+      }
+    }
+  ]
+}

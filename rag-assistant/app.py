@@ -16,7 +16,7 @@ from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 import config
 
@@ -70,8 +70,14 @@ def _get_llm():
 
 
 class AskIn(BaseModel):
-    question: str
-    top_k: int | None = None
+    """Requête POST /ask — contrat : contracts/rag-ask.schema.json (AskRequest).
+    Hors bornes → 422 : une question vide n'a rien à chercher, et un top_k élevé
+    gonfle le contexte (et la latence du LLM) sans gain de pertinence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=2000)
+    top_k: int | None = Field(default=None, ge=1, le=20)
 
 
 @app.post("/ask")
