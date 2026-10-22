@@ -1,0 +1,19 @@
+---
+# block_ip : ajoute `deny <ip>;` à la liste de blocage du WAF et recharge nginx.
+# extravar `ip` déjà validée par le moteur (IPv4, ni loopback ni interne). L'IP réelle du client
+# arrive au WAF via proxy_protocol -> $remote_addr, donc le `deny` au niveau server la bloque.
+# Le WAF inclut /etc/nginx/denylist/*.conf (waf/nginx/default.conf.template).
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "deny {{ ip }} au WAF puis reload"
+      community.docker.docker_container_exec:
+        container: ra-waf
+        argv:
+          - /bin/sh
+          - -c
+          - >-
+            mkdir -p /etc/nginx/denylist
+            && printf 'deny %s;\n' "{{ ip }}" > "/etc/nginx/denylist/{{ ip | replace('.', '_') }}.conf"
+            && nginx -t && nginx -s reload

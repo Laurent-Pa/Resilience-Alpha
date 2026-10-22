@@ -30,6 +30,11 @@ scrape_configs:
     static_configs:
       - targets: ['remediation-engine:8000']
 
+  # --- Service de reconnaissance faciale (second facteur du rôle ops) ---
+  - job_name: 'face-auth'
+    static_configs:
+      - targets: ['face-auth:8000']
+
   # --- Keycloak : métriques Prometheus natives sur l'interface de management (port 9000,
   # indépendant de KC_HTTP_RELATIVE_PATH=/auth qui ne s'applique qu'au port 8080) ---
   - job_name: 'keycloak'

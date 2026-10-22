@@ -1,0 +1,17 @@
+# ===================================================================
+# PROVISIONING GRAFANA — chargement automatique des dashboards
+# Grafana importe au démarrage tous les .json de ce dossier.
+# ===================================================================
+apiVersion: 1
+
+providers:
+  - name: resilience-alpha
+    orgId: 1
+    folder: "RESILIENCE-ALPHA"
+    type: file
+    disableDeletion: false
+    editable: true
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

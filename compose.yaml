@@ -37,6 +37,10 @@ secrets:
     file: ./.secrets/webhook_hmac_key
   grafana_admin_password:
     file: ./.secrets/grafana_admin_password
+  face_service_token:
+    file: ./.secrets/face_service_token
+  biometric_key:
+    file: ./.secrets/biometric_key
 
 services:
   # -----------------------------------------------------------------------------------
@@ -100,7 +104,8 @@ services:
   # -----------------------------------------------------------------------------------
   keycloak:
     <<: *restart
-    image: quay.io/keycloak/keycloak:26.8.0
+    # Image officielle + authenticator « reconnaissance faciale » (étape caméra du rôle ops).
+    build: ./keycloak
     container_name: ra-keycloak
     command: ["start", "--import-realm"]
     # Bootstrap admin + valeurs des ${...} du realm (PROBER_CLIENT_SECRET, ...).
@@ -119,6 +124,9 @@ services:
       # à l'import. Le realm n'est importé que s'il n'existe pas : base H2 interne au
       # conteneur, donc à chaque recréation du conteneur.
       PUBLIC_HOST: ${PUBLIC_HOST}
+      # Étape caméra des comptes ops : appel interne à face-auth (fail-closed si injoignable).
+      FACE_AUTH_URL: http://face-auth:8000
+    secrets: [face_service_token]
     volumes:
       - ./keycloak/realm-resilience.json:/opt/keycloak/data/import/realm-resilience.json:ro
     healthcheck:
@@ -162,6 +170,28 @@ services:
         condition: service_healthy
     # llm : pour appeler rag-assistant (POST /api/admin/assistant/ask), seul sur ce réseau.
     networks: [backend, edge, monitoring, llm]
+
+  # Second facteur facial du back-office. /internal : Keycloak seulement (jamais routé par
+  # le WAF) ; aucune route publique.
+  face-auth:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: services/face-auth/Dockerfile
+    container_name: ra-face-auth
+    environment:
+      LOG_LEVEL: INFO
+      DB_HOST: postgres
+      OIDC_ISSUER: https://${PUBLIC_HOST}/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      CORS_ORIGINS: '["https://${PUBLIC_HOST}"]'
+      # Échecs consécutifs avant verrou de 5 min (défaut code : 2, consigne du sujet).
+      MAX_FAILURES: "5"
+    secrets: [face_service_token, biometric_key, db_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, edge, monitoring]
 
   # Front Next.js (paiement sous /, back-office sous /admin), servi par le WAF.
   # Les NEXT_PUBLIC_* sont FIGÉES dans le bundle au build : tout changement de PUBLIC_HOST
@@ -215,20 +245,56 @@ services:
       LOG_LEVEL: INFO
       OIDC_ISSUER: https://${PUBLIC_HOST}/auth/realms/resilience
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
-      EXECUTOR: fake
+      EXECUTOR: ansible
       VERIFIER: real
       PROBER_STATUS_URL: http://prober:8000/status
       LEDGER_URL: https://${PUBLIC_HOST}/api/admin/ledger/check
       CA_BUNDLE: /certs/lab-ca.pem
       KC_TOKEN_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/token
       DB_HOST: postgres
+      DOCKER_HOST: tcp://docker-socket-proxy:2375   # community.docker des playbooks (jamais docker.sock direct)
+      # Connexion `local` : ansible résout ~ via passwd (/home/app, non inscriptible). Rooter le tmp dans /tmp.
+      ANSIBLE_REMOTE_TEMP: /tmp/.ansible-tmp
+      ANSIBLE_LOCAL_TEMP: /tmp/.ansible-tmp
     secrets: [webhook_hmac_key, remediation_client_secret, db_password]
     volumes:
       - ./certs/lab-ca.pem:/certs/lab-ca.pem:ro
+      - ./ansible/playbooks:/playbooks:ro
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [backend, edge, monitoring]
+    networks: [backend, edge, monitoring, socketproxy]
+
+  # Accès Docker filtré pour les playbooks du moteur (restart / exec), jamais docker.sock en direct.
+  # N'autorise que les routes nécessaires ; isolé sur le réseau socketproxy avec le seul moteur.
+  docker-socket-proxy:
+    <<: *restart
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: ra-docker-socket-proxy
+    environment:
+      CONTAINERS: 1        # lister/inspecter (recycle_service)
+      POST: 1              # autoriser les écritures (sinon API en lecture seule)
+      EXEC: 1              # docker_container_exec (block_ip, kill_db_conns)
+      IMAGES: 1            # docker_container inspecte l'image avant restart (recycle_service)
+      ALLOW_RESTARTS: 1    # restart de conteneur (recycle_service) ; sinon 403 Forbidden
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [socketproxy]
+
+  # Détection ML (pilier IA) : lit Prometheus, poste une alerte signée HMAC au moteur
+  # (http://remediation-engine:8000/alerts, cf. detection/config.py) quand une anomalie persiste.
+  # model.joblib est gitignoré : le réentraîner sur le trafic du PC Hôte (detection/README.md).
+  # Bind-mount pour lire le modèle réentraîné sans rebuild.
+  detection:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: detection/Dockerfile
+    container_name: ra-detection
+    volumes: ["./detection:/app/detection"]
+    secrets: [webhook_hmac_key]
+    depends_on: [remediation-engine, prometheus]
+    networks: [monitoring]
 
   # -----------------------------------------------------------------------------------
   # Pilier IA : assistant documentaire (RAG). Répond à partir de docs/exploitation/ avec
@@ -286,7 +352,8 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=7d'
     ports: ["127.0.0.1:9090:9090"]
-    networks: [monitoring]
+    # edge : monitoring est internal, Docker ne publie pas de port sur un réseau interne seul.
+    networks: [monitoring, edge]
 
   loki:
     <<: *restart
@@ -297,7 +364,7 @@ services:
       - loki_data:/loki
     command: -config.file=/etc/loki/loki-config.yml
     ports: ["127.0.0.1:3100:3100"]
-    networks: [monitoring]
+    networks: [monitoring, edge]
 
   grafana:
     <<: *restart
@@ -313,7 +380,7 @@ services:
       - grafana_data:/var/lib/grafana
     ports: ["127.0.0.1:3001:3000"]
     depends_on: [prometheus, loki]
-    networks: [monitoring]
+    networks: [monitoring, edge]
 
   # Sonde HTTP générique pour les services sans /metrics natif (frontend, waf) : voir
   # prometheus/blackbox.yml et le job "blackbox-http" de prometheus.yml.
@@ -345,3 +412,6 @@ networks:
   # rag-assistant et son seul client, payment-api. Non interne : sortie vers Ollama
   # (host.docker.internal:11434). Ni le WAF ni le frontend n'y sont rattachés.
   llm: {}
+  # Le moteur -> docker-socket-proxy uniquement. Sans accès sortant.
+  socketproxy:
+    internal: true

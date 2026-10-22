@@ -26,7 +26,9 @@ def charger_fragments():
     racine = pathlib.Path(config.DOCS_DIR)
     fichiers = sorted(racine.rglob("*.md"))
     if not fichiers:
-        raise SystemExit(f"Aucun .md trouvé dans {racine}. Vérifie DOCS_DIR / le montage du volume.")
+        raise SystemExit(
+            f"Aucun .md trouvé dans {racine}. Vérifie DOCS_DIR / le montage du volume."
+        )
 
     header_splitter = MarkdownHeaderTextSplitter(HEADERS, strip_headers=False)
     taille_splitter = RecursiveCharacterTextSplitter(
@@ -35,7 +37,7 @@ def charger_fragments():
 
     fragments = []
     for chemin in fichiers:
-        post = frontmatter.load(chemin)          # sépare l'en-tête YAML du corps
+        post = frontmatter.load(chemin)  # sépare l'en-tête YAML du corps
         meta_fichier = post.metadata or {}
         rel = chemin.relative_to(racine).as_posix()
         titre = meta_fichier.get("titre", rel)

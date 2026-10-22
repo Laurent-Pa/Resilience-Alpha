@@ -50,6 +50,7 @@ Un conteneur redémarré ne vaut pas preuve.
 10. **Un compte bancaire par personne.** Le compte débité se déduit du jeton ; aucun identifiant de compte source n'est envoyé (ajout du 19/10).
 11. **Coordonnées bancaires chiffrées de bout en bout.** Le bénéficiaire (IBAN, BIC, nom) est chiffré par le navigateur (RSA-OAEP + AES-GCM) ; l'IBAN n'est jamais stocké ni journalisé en clair (HMAC + forme masquée). Voir §7 (ajout du 19/10).
 12. **Routes métier sous `/api`**, sondes techniques (`/health/*`, `/metrics`) à la racine (ajout du 19/10).
+13. **Second facteur facial pour le rôle `ops`** (consigne additionnelle 1, ajout du 21/10) : étape caméra **dans Keycloak**, entre l'identifiant et le mot de passe (authenticator Java `keycloak/face-authenticator`, flux `browser-face`), décision par le service `face-auth`. Aucun jeton n'est émis sans visage reconnu : rien à vérifier côté API. Voir §7 bis.
 
 ---
 
@@ -68,7 +69,9 @@ resilience-alpha/
 │   ├── alert.schema.json          # format d'entrée de POST /alerts
 │   └── event.schema.json          # format des événements SSE
 ├── keycloak/
-│   └── realm-resilience.json      # realm importé au démarrage (--import-realm)
+│   ├── realm-resilience.json      # realm importé au démarrage (--import-realm), flux browser-face
+│   ├── Dockerfile                 # image Keycloak + authenticator facial (build Maven multi-stage)
+│   └── face-authenticator/        # SPI Java : étape caméra des ops (FaceAuthenticator, face-auth.ftl)
 ├── libs/
 │   └── common/                    # package resilience-common
 │       ├── pyproject.toml
@@ -96,6 +99,10 @@ resilience-alpha/
 │   │   │   ├── bootstrap.py       # migrations + seed au démarrage
 │   │   │   ├── export_openapi.py
 │   │   │   └── seed.py            # comptes fictifs, idempotent
+│   │   └── tests/
+│   ├── face-auth/                 # reconnaissance faciale (OpenCV YuNet + SFace), §7 bis
+│   │   ├── Dockerfile             # modèles ONNX téléchargés au build (sha256 figé)
+│   │   ├── src/face_auth/         # engine, lockout, crypto, store, service, api/{internal,admin}, enroll (CLI)
 │   │   └── tests/
 │   ├── prober/
 │   │   ├── pyproject.toml
@@ -417,6 +424,29 @@ Taille explicite (`pool_size=10`, `max_overflow=5`), `pool_timeout=2`, `statemen
 
 `uv run pytest services/payment-api` (Docker requis : Postgres via testcontainers). Couvrent : nominal, refus métier, IBAN/BIC, chiffrement (altération, mauvaise clé, IV invalide, payload incomplet), idempotence (rejeu, conflit, 10 requêtes concurrentes même clé), 50 virements croisés concurrents, ledger check, absence d'IBAN en clair en base et dans les logs, origine des opérations (rôle du jeton, rejeu), exclusion de la sonde de la vue admin, SLI par minute.
  
+---
+
+## 7 bis. Second facteur facial (back-office, rôle `ops`)
+
+> **État : fait et testé de bout en bout** (21/10) : vrai Keycloak 26.8 + face-auth + Postgres. L'IoT (ESP8266, LED) n'est pas traité.
+
+**Flux Keycloak `browser-face`** (navigateur, tous clients) : cookie, ou identifiant (`auth-username-form`) → sous-flux CONDITIONAL [`conditional-user-role` = `ops` → `face-recognition`] → mot de passe (`auth-password-form`). `client_credentials` (prober, moteur) n'est pas concerné. Le realm exporté contient **tous** les flux par défaut : dès que `authenticationFlows` est fourni, Keycloak ne recrée pas ceux qui manquent à l'import (le flux `clients` disparaîtrait, cassant prober et moteur).
+
+**Authenticator** (`keycloak/face-authenticator`) : page `face-auth.ftl` (getUserMedia, capture 480×360 JPEG : la limite de formulaire de Keycloak est d'environ 128 Ko, au-delà HTTP 413), POST du data URL, appel serveur à serveur de face-auth. Non reconnu → page « Visage non reconnu », caméra éteinte, bouton → `resetFlow()` (identifiant vide). Verrou → page « bloqué jusqu'à … », sans caméra. face-auth injoignable → refus (fail-closed). L'échec est aussi compté par la protection brute-force de Keycloak (`failureChallenge`).
+
+**face-auth** : YuNet (détection) + SFace (empreinte 128 floats), OpenCV sur CPU, ~39 Mo de modèles Apache 2.0. Préféré à InsightFace : modèles pré-entraînés InsightFace réservés à la recherche non commerciale, dépendances lourdes, compilation C. Seuil cosinus 0.363 (`MATCH_THRESHOLD`). Aucune image conservée ; empreinte chiffrée AES-256-GCM (`biometric_key`, identifiant en donnée authentifiée). Issues : `match` ; `no_match` et `not_enrolled` (comptés, même réponse vue de Keycloak) ; `locked` ; `no_face`/`invalid_image` (non comptés). 2 échecs consécutifs → verrou 5 min (`MAX_FAILURES`, `LOCK_S`).
+
+| Méthode | Route | Auth | Rôle |
+| --- | --- | --- | --- |
+| GET | `/internal/users/{username}/status` | Bearer `face_service_token` | Keycloak : verrou actif ? |
+| POST | `/internal/verify` `{username, image}` | Bearer `face_service_token` | Keycloak : comparaison + compteur |
+| GET | `/api/biometrics/users` | JWT ops, aud `face-auth` | enrôlés + verrous/échecs en cours |
+| PUT / DELETE | `/api/biometrics/users/{username}/face` | JWT ops | enrôler (un seul visage) / révoquer |
+| POST | `/api/biometrics/users/{username}/unlock` | JWT ops | lever le verrou |
+| GET | `/api/biometrics/attempts?limit=` | JWT ops | journal (issue, score) |
+
+**Amorçage** : un ops non enrôlé ne peut pas se connecter. Pas d'enrôlement à la première connexion : un tiers qui ne connaît que l'identifiant pourrait enrôler son propre visage. Premier enrôlement en CLI : `python -m face_auth.enroll <username> <image>` dans le conteneur (cf. README) ; ensuite page `/admin/biometrics`. Realm : client bearer-only `face-auth` + mapper d'audience `aud-face-auth` sur `web-ops`.
+
 ---
 
 ## 8. prober
