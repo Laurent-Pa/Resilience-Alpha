@@ -2,6 +2,8 @@
 # OUTILS PARTAGÉS : interroger Prometheus et construire un "relevé"
 # Utilisé par collect.py, train.py et detect.py.
 # ===================================================================
+import time
+
 import requests
 
 import config
@@ -39,6 +41,37 @@ def releve_actuel():
     L'ordre des clés suit config.QUERIES (important pour le modèle).
     """
     return {nom: query_one(requete) for nom, requete in config.QUERIES.items()}
+
+
+def _serie(promql, debut, fin):
+    """{timestamp: valeur} d'une requête sur une plage (NaN -> 0.0, comme query_one)."""
+    url = f"{config.PROMETHEUS_URL}/api/v1/query_range"
+    params = {"query": promql, "start": debut, "end": fin, "step": config.POLL_INTERVAL_SECONDS}
+    reponse = requests.get(url, params=params, timeout=30)
+    reponse.raise_for_status()
+    resultat = reponse.json()["data"]["result"]
+    if not resultat:
+        return {}
+    return {t: (v if v == v else 0.0) for t, v in ((t, float(v)) for t, v in resultat[0]["values"])}
+
+
+def releves_historiques(minutes):
+    """Relevés des `minutes` passées, un toutes les POLL_INTERVAL_SECONDS (mêmes colonnes que
+    releve_actuel). On ne garde que les instants SAINS : sans 5xx et sonde OK, pour ne pas
+    apprendre une attaque ou une panne passée comme « normale »."""
+    # Prometheus refuse plus de 11 000 points par série.
+    assert minutes * 60 / config.POLL_INTERVAL_SECONDS <= 11000, "plage trop longue"
+    fin = time.time()
+    debut = fin - minutes * 60
+    series = {nom: _serie(q, debut, fin) for nom, q in config.QUERIES.items()}
+    releves = [
+        {nom: series[nom].get(t, 0.0) for nom in config.QUERIES} for t in sorted(series["req_rate"])
+    ]
+    return [
+        r
+        for r in releves
+        if r["error_rate"] == 0 and r["probe_success"] == 1 and r["probe_failures_rate"] == 0
+    ]
 
 
 def noms_features():

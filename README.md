@@ -779,6 +779,26 @@ Validé le 21/10 en `On` : parcours `alice` (virement, déconnexion, reconnexion
 | 7 — Vault | cyber | certificat, initialisation et descellement ; corriger `vault/init-secrets.sh` (voir ci-dessous) | `infra-todo.md` §6 |
 | 8 — Détection + attaque | IA + cyber | réentraîner `detection/` sur le trafic du PC Hôte ; attaque `scripts/flood.py` depuis le PC Attaquant ; recette | `infra-todo.md` §7, §9 |
 
+**Réentraîner la détection sur le PC Hôte** (étape 8, stack démarrée : le prober et Prometheus doivent tourner). `./detection` est monté dans `ra-detection` : `normal_traffic.csv` et `model.joblib` sont écrits sur le disque de l'hôte.
+
+```powershell
+# 1. Collecte (15 min), AUCUNE attaque. Dans un 2e terminal, navigation simulée pendant toute la collecte
+#    (sinon le modèle n'apprend que la sonde et un simple clic passe pour une attaque) :
+#    alice, bob et carol se connectent (mot de passe : .secrets/test_users_password), consultent et se font des virements
+#    .\.venv\Scripts\python.exe scripts/browse.py --base https://<PUBLIC_HOST> --ca certs/lab-ca.pem -d 960
+docker compose exec detection python collect.py 15
+# 1 bis. Plus rapide : reprendre l'historique Prometheus (instants sains seulement), s'il couvre déjà
+#        du repos ET de la navigation (ex. une session browse.py plus tôt) :
+#        docker compose run --rm detection python collect.py --history 120
+# 2. Entraînement (écrit detection/model.joblib)
+docker compose exec detection python train.py
+# 3. Recharger le modèle et suivre la détection
+docker compose restart detection
+docker logs -f ra-detection
+```
+
+Si `Permission denied` sur le bind-mount (conteneur en non-root) : ajouter `-u root` après `exec`. Revérifier `SEUIL_SCORE` (`detection/config.py`) après réentraînement : scores en trafic normal, puis pendant `scripts/flood.py`.
+
 **Démarrer la plateforme** (chaque session, et le jour J) :
 
 ```bash
