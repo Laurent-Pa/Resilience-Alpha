@@ -37,6 +37,10 @@ secrets:
     file: ./.secrets/webhook_hmac_key
   grafana_admin_password:
     file: ./.secrets/grafana_admin_password
+  face_service_token:
+    file: ./.secrets/face_service_token
+  biometric_key:
+    file: ./.secrets/biometric_key
 
 services:
   # -----------------------------------------------------------------------------------
@@ -100,7 +104,8 @@ services:
   # -----------------------------------------------------------------------------------
   keycloak:
     <<: *restart
-    image: quay.io/keycloak/keycloak:26.8.0
+    # Image officielle + authenticator « reconnaissance faciale » (étape caméra du rôle ops).
+    build: ./keycloak
     container_name: ra-keycloak
     command: ["start", "--import-realm"]
     # Bootstrap admin + valeurs des ${...} du realm (PROBER_CLIENT_SECRET, ...).
@@ -119,6 +124,9 @@ services:
       # à l'import. Le realm n'est importé que s'il n'existe pas : base H2 interne au
       # conteneur, donc à chaque recréation du conteneur.
       PUBLIC_HOST: ${PUBLIC_HOST}
+      # Étape caméra des comptes ops : appel interne à face-auth (fail-closed si injoignable).
+      FACE_AUTH_URL: http://face-auth:8000
+    secrets: [face_service_token]
     volumes:
       - ./keycloak/realm-resilience.json:/opt/keycloak/data/import/realm-resilience.json:ro
     healthcheck:
@@ -162,6 +170,26 @@ services:
         condition: service_healthy
     networks: [backend, edge, monitoring]
 
+  # Second facteur facial du back-office. /internal : Keycloak seulement (jamais routé par
+  # le WAF) ; /api/biometrics : page Biométrie du back-office (JWT ops, audience face-auth).
+  face-auth:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: services/face-auth/Dockerfile
+    container_name: ra-face-auth
+    environment:
+      LOG_LEVEL: INFO
+      DB_HOST: postgres
+      OIDC_ISSUER: https://${PUBLIC_HOST}/auth/realms/resilience
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
+      CORS_ORIGINS: '["https://${PUBLIC_HOST}"]'
+    secrets: [face_service_token, biometric_key, db_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, edge, monitoring]
+
   # Front Next.js (paiement sous /, back-office sous /admin), servi par le WAF.
   # Les NEXT_PUBLIC_* sont FIGÉES dans le bundle au build : tout changement de PUBLIC_HOST
   # impose `docker compose build frontend`. API en chemins relatifs (même origine que le WAF).
@@ -174,6 +202,7 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: /api/payments
         NEXT_PUBLIC_ADMIN_API_BASE_URL: /api/admin
+        NEXT_PUBLIC_BIOMETRICS_API_BASE_URL: /api/biometrics
         NEXT_PUBLIC_OIDC_AUTHORITY: https://${PUBLIC_HOST}/auth/realms/resilience
         NEXT_PUBLIC_ADMIN_OIDC_CLIENT_ID: web-ops
     container_name: ra-frontend

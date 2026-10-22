@@ -142,7 +142,7 @@ services:
       dockerfile: services/remediation-engine/Dockerfile
     environment:
       LOG_LEVEL: INFO
-      OIDC_ISSUER: http://localhost:8080/auth/realms/resilience
+      OIDC_ISSUER: https://localhost:8443/auth/realms/resilience
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/resilience/protocol/openid-connect/certs
       EXECUTOR: fake
       VERIFIER: real
