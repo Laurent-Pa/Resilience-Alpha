@@ -1,0 +1,14 @@
+# vars.yml : ne garder que les variables non sensibles
+keycloak_version: "26.0.5"
+keycloak_user: keycloak
+keycloak_group: keycloak
+keycloak_home: /opt/keycloak
+keycloak_hostname: sso.example.com
+keycloak_http_port: 8080
+
+keycloak_db_name: keycloak
+keycloak_db_user: keycloak
+keycloak_db_host: localhost
+keycloak_db_port: 5432
+
+keycloak_java_package: openjdk-21-jre-headless
