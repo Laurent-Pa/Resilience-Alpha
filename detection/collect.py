@@ -4,7 +4,8 @@
 # Enregistre un relevé toutes les X secondes dans un fichier CSV.
 # Ce CSV servira à entraîner le modèle à reconnaître "le normal".
 #
-# Usage :  python collect.py 10       (collecte pendant 10 minutes)
+# Usage :  python collect.py 10              (collecte pendant 10 minutes)
+#          python collect.py --history 120   (reprend les 120 dernières min de Prometheus)
 # ===================================================================
 import csv
 import sys
@@ -14,7 +15,21 @@ import config
 import prom
 
 
+def depuis_historique(minutes):
+    """Reconstruit le CSV depuis l'historique Prometheus, sans attendre (instants sains seulement)."""
+    releves = prom.releves_historiques(minutes)
+    with open(config.DATA_FILE, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=prom.noms_features())
+        writer.writeheader()
+        writer.writerows(releves)
+    print(f"✅ {len(releves)} relevés sains des {minutes:.0f} dernières min -> {config.DATA_FILE}")
+    print("Étape suivante :  python train.py")
+
+
 def main():
+    # --history N : reprendre les N dernières minutes de Prometheus au lieu de collecter en direct.
+    if len(sys.argv) > 2 and sys.argv[1] == "--history":
+        return depuis_historique(float(sys.argv[2]))
     # Durée de collecte en minutes (par défaut 10).
     minutes = float(sys.argv[1]) if len(sys.argv) > 1 else 10.0
     fin = time.time() + minutes * 60

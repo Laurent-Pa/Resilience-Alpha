@@ -57,9 +57,10 @@ POLL_INTERVAL_SECONDS = 10  # on interroge Prometheus toutes les 10 s
 CONSECUTIVE_ANOMALIES = 3  # nb d'anomalies d'affilée avant de déclencher
 # Seuil du score Isolation Forest : en dessous = anormal. Le défaut de sklearn (-0.5) est trop
 # sensible sur un trafic normal quasi constant (un débit -30 % ou un pic de latence suffisent).
-# Les scores saturent : variation normale jusqu'à ~-0.64, attaque ~-0.68 à -0.70 (mesuré).
-# À revérifier après chaque réentraînement sur de nouvelles données.
-SEUIL_SCORE = -0.66
+# Mesuré le 22/10 (2 h d'historique PC Hôte, repos + navigation browse.py) : pire relevé normal
+# -0.722, 0 alerte confirmée sur 2 h à -0.72 (4 à -0.66) ; flood simulé -0.76 (get) à -0.82.
+# À revérifier après chaque réentraînement ; le seuil est figé dans model.joblib par train.py.
+SEUIL_SCORE = -0.725
 # (évite de réagir à un simple hoquet)
 
 # --- Fichiers produits ---

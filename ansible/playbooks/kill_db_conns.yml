@@ -1,0 +1,21 @@
+---
+# kill_db_conns : coupe les connexions du rôle saturé pour libérer le pool. extravar `db_role`
+# déjà validée (payment_app). psql dans le conteneur postgres (payment_app = superuser du seed,
+# socket local en trust) ; on épargne la connexion courante.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "terminer les backends du rôle {{ db_role }}"
+      community.docker.docker_container_exec:
+        container: ra-postgres
+        argv:
+          - psql
+          - -U
+          - payment_app
+          - -d
+          - resilience
+          - -tAc
+          - >-
+            SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+            WHERE usename = '{{ db_role }}' AND pid <> pg_backend_pid();

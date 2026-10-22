@@ -1,0 +1,11 @@
+---
+# recycle_service : redémarre le conteneur du service. extravar `service` déjà validée
+# (payment-api | keycloak). Vide les connexions DB bloquées et repart propre.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "redémarrer ra-{{ service }}"
+      community.docker.docker_container:
+        name: "ra-{{ service }}"
+        restart: true

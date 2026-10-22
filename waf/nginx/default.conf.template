@@ -50,6 +50,10 @@ server {
     set_real_ip_from 127.0.0.1;
     real_ip_header proxy_protocol;
 
+    # Liste de blocage alimentée par le moteur de remédiation (block_ip.yml : deny <ip>; + reload).
+    # Glob vide au démarrage = aucune règle, nginx l'accepte.
+    include /etc/nginx/denylist/*.conf;
+
     ssl_certificate     /etc/nginx/certs/waf.crt;
     ssl_certificate_key /etc/nginx/certs/waf.key;
     ssl_protocols       TLSv1.2 TLSv1.3;
