@@ -1,3 +1,4 @@
+# vars.yml : ne garder que les variables non sensibles
 keycloak_version: "26.0.5"
 keycloak_user: keycloak
 keycloak_group: keycloak
