@@ -103,28 +103,31 @@ l'index persistant est réutilisé.
 
 ```powershell
 docker compose logs -f rag-assistant      # doit finir par "Uvicorn running on ..."
-docker compose exec rag-assistant curl -s http://localhost:8000/health/ready
+docker compose exec rag-assistant python -c "import urllib.request as u; print(u.urlopen('http://localhost:8000/health/ready').read().decode())"
 ```
-`/health/ready` doit renvoyer `{"status":"ready","documents":N}` avec N > 0.
+`/health/ready` doit renvoyer `{"status":"ready","documents":N}` avec N > 0. Si l'index est
+vide ou illisible, il répond **503** (la commande ci-dessus affiche alors une `HTTPError 503`).
+
+> L'image `python:3.12-slim` ne contient pas `curl` : les vérifications passent par Python.
 
 ## Étape 7 — Tester une vraie question
 
-Depuis le conteneur (ou n'importe où si tu publies le port) :
+Depuis le conteneur (le service ne publie aucun port) :
 
 ```powershell
-docker compose exec rag-assistant curl -s -X POST http://localhost:8000/ask ^
-  -H "Content-Type: application/json" ^
-  -d "{\"question\": \"Que faire en cas de flood HTTP sur payment-api ?\"}"
+docker compose exec rag-assistant python -c "import json,urllib.request as u; r=u.Request('http://localhost:8000/ask', json.dumps({'question': 'Que faire en cas de flood HTTP sur payment-api ?'}).encode(), {'Content-Type': 'application/json'}); print(json.dumps(json.loads(u.urlopen(r, timeout=120).read()), ensure_ascii=False, indent=2))"
 ```
 
 La réponse doit être en français, ancrée dans la doc, avec une liste `sources`
 pointant vers les fichiers de `docs/exploitation/`.
 
-## Étape 8 — (optionnel) Brancher le back-office
+## Accès depuis le back-office
 
-Pour que le panneau AssistantPanel du back-office `web-ops` l'utilise, l'infra
-route `/api/assistant` vers `rag-assistant:8000` au niveau du WAF (même logique que
-`/api/remediation`). Non nécessaire pour démontrer l'assistant isolément.
+`rag-assistant` n'a pas d'authentification propre : il n'est **pas exposé par le WAF**
+et ne publie aucun port. Le back-office (`/admin`, rôle `ops`) l'interroge via
+`payment-api` : `POST /api/admin/assistant/ask` vérifie le jeton (rôle `ops`), puis relaie
+la question vers `http://rag-assistant:8000/ask` sur le réseau Docker interne.
+`payment-api` et `rag-assistant` doivent donc partager un réseau.
 
 ---
 

@@ -11,6 +11,7 @@ import sys
 import time
 
 from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama, OllamaEmbeddings
@@ -126,14 +127,17 @@ def live():
 
 @app.get("/health/ready")
 def ready():
-    """Prêt si l'index contient des documents (Ollama est testé à la 1re question)."""
+    """Prêt si l'index contient des documents (Ollama est testé à la 1re question).
+
+    Un tuple (corps, code) n'est pas interprété par FastAPI (il renverrait 200 avec
+    une liste JSON) : le 503 passe par une JSONResponse explicite."""
     try:
         n = _get_store()._collection.count()
         if n > 0:
             return {"status": "ready", "documents": n}
-        return ({"status": "empty"}, 503)
+        return JSONResponse({"status": "empty"}, status_code=503)
     except Exception as e:  # noqa: BLE001
-        return ({"status": "error", "detail": str(e)}, 503)
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
 
 
 if __name__ == "__main__":
