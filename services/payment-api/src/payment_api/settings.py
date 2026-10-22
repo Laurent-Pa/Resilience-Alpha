@@ -37,6 +37,13 @@ class Settings(ServiceSettings):
     # (dénominateur du taux de réussite) ne peut venir que de cette valeur.
     prober_interval_s: float = Field(default=5.0, gt=0)
 
+    # Assistant documentaire (pilier IA), relayé par POST /admin/assistant/ask. Joint sur
+    # le réseau Docker interne, jamais via le WAF : il n'a pas d'authentification propre.
+    rag_assistant_url: str = "http://rag-assistant:8000"
+    # Le LLM tourne sur le CPU du PC Hôte : la première réponse (chargement du modèle en
+    # mémoire) peut dépasser la minute. Au-delà, 504 `assistant_timeout`.
+    rag_assistant_timeout_s: float = Field(default=120.0, gt=0)
+
     def db_url(self) -> URL | str:
         if self.database_url:
             return self.database_url

@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +25,7 @@ API_PREFIX = "/api"
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
+    await app.state.rag_client.aclose()
     await app.state.engine.dispose()
 
 
@@ -45,6 +47,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.pseudonymizer = crypto.pseudonymizer_from(settings)
     app.state.prober_interval_s = settings.prober_interval_s
+    # Client du relais POST /admin/assistant/ask. Connexion courte (service absent = 503
+    # immédiat), lecture longue (génération du LLM sur CPU).
+    app.state.rag_client = httpx.AsyncClient(
+        base_url=settings.rag_assistant_url,
+        timeout=httpx.Timeout(settings.rag_assistant_timeout_s, connect=3.0),
+    )
     app.state.transfer_cipher, ephemeral = crypto.cipher_from(settings)
     if ephemeral:
         log.warning(
