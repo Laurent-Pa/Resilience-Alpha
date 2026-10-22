@@ -169,7 +169,8 @@ services:
       dockerfile: rag-assistant/Dockerfile
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      LLM_MODEL: llama3.1:8b
+      # Modèle de génération : surcharger RAG_LLM_MODEL dans .env (ex. llama3.1:8b).
+      LLM_MODEL: ${RAG_LLM_MODEL:-qwen2.5:3b}
       EMBED_MODEL: nomic-embed-text
       DOCS_DIR: /app/docs
       ANONYMIZED_TELEMETRY: "False"        # télémétrie Chroma : inutile, et bruit dans les logs

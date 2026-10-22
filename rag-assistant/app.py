@@ -14,11 +14,12 @@ from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_ollama import ChatOllama
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
+from embeddings import make_embeddings
 
 # --- Métriques Prometheus (DoD projet : chaque service expose /metrics) ---
 RAG_REQUESTS = Counter("rag_requests_total", "Questions traitées", ["outcome"])
@@ -33,7 +34,8 @@ def log_json(event, **fields):
 SYSTEME = (
     "Tu es l'assistant documentaire de la plateforme Résilience Alpha. "
     "Tu aides un opérateur à comprendre le système et à retrouver les procédures. "
-    "Réponds en français, de façon concise et précise. "
+    "Réponds en français, de façon concise et précise : quelques phrases, ou une courte "
+    "liste d'étapes pour une procédure. "
     "Appuie-toi UNIQUEMENT sur le CONTEXTE fourni ci-dessous. "
     "Si l'information ne s'y trouve pas, dis-le clairement (« je ne trouve pas cette "
     "information dans la documentation ») plutôt que d'inventer. "
@@ -53,10 +55,10 @@ _llm = None
 def _get_store():
     global _store
     if _store is None:
-        embeddings = OllamaEmbeddings(model=config.EMBED_MODEL, base_url=config.OLLAMA_BASE_URL)
+        # Mêmes embeddings qu'à l'indexation (préfixe "search_query: " sur la question).
         _store = Chroma(
             collection_name=config.COLLECTION,
-            embedding_function=embeddings,
+            embedding_function=make_embeddings(),
             persist_directory=config.PERSIST_DIR,
         )
     return _store
@@ -65,7 +67,13 @@ def _get_store():
 def _get_llm():
     global _llm
     if _llm is None:
-        _llm = ChatOllama(model=config.LLM_MODEL, base_url=config.OLLAMA_BASE_URL, temperature=0)
+        _llm = ChatOllama(
+            model=config.LLM_MODEL,
+            base_url=config.OLLAMA_BASE_URL,
+            temperature=0,
+            keep_alive=config.KEEP_ALIVE,     # modèle gardé en mémoire entre les questions
+            num_predict=config.NUM_PREDICT,   # réponse bornée : latence bornée sur CPU
+        )
     return _llm
 
 
@@ -117,7 +125,7 @@ def ask(body: AskIn):
     RAG_REQUESTS.labels(outcome="ok").inc()
     RAG_LATENCY.observe(latence_ms / 1000)
     log_json("rag.answer", outcome="ok", question_len=len(body.question),
-             n_sources=len(sources), latency_ms=latence_ms)
+             n_sources=len(sources), latency_ms=latence_ms, model=config.LLM_MODEL)
     return {"answer": reponse.content, "sources": sources}
 
 

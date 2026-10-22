@@ -18,6 +18,7 @@ docs/exploitation/*.md → découpage par titres (+ frontmatter) → embeddings 
 | Fichier | Rôle |
 |---|---|
 | `config.py` | Réglages (URL Ollama, modèles, dossiers, top_k) — par défaut déjà prêts |
+| `embeddings.py` | Embeddings `nomic-embed-text` avec leurs préfixes de tâche |
 | `ingest.py` | Construit l'index Chroma à partir des docs |
 | `app.py` | API HTTP : `POST /ask`, `/health/live`, `/health/ready`, `/metrics` |
 | `requirements.txt`, `Dockerfile` | Dépendances et image |
@@ -40,10 +41,22 @@ installé, il tourne en service en arrière-plan.
 Dans PowerShell :
 
 ```powershell
-ollama pull llama3.1:8b          # le LLM (8 Md paramètres = le max autorisé)
-ollama pull nomic-embed-text     # les embeddings (recherche)
+ollama pull qwen2.5:3b           # le LLM (modèle par défaut, ~2 Go)
+ollama pull nomic-embed-text     # les embeddings (recherche, ~275 Mo)
 ollama list                      # vérifier : les deux doivent apparaître
 ```
+
+**Pourquoi un modèle 3B.** Sur le PC Hôte, Ollama tourne sur le CPU seul (`ollama ps` :
+`100% CPU`). Mesures (`ollama run <modèle> --verbose`) :
+
+| Modèle | Chargement | Lecture du contexte | Écriture | Réponse RAG |
+|---|---|---|---|---|
+| `qwen2.5:3b` (défaut) | 5 s | ~20 tokens/s | ~6 tokens/s | ~1 min |
+| `llama3.1:8b` | 20 s | ~6 tokens/s | ~3 tokens/s | > 4 min (délai dépassé) |
+
+Le sujet impose ≤ 8 Md de paramètres : le 3B est conforme. Pour essayer un autre modèle,
+`ollama pull <modèle>` puis `RAG_LLM_MODEL=<modèle>` dans `.env` et
+`docker compose up -d rag-assistant` (pas de réindexation : seul le LLM change).
 
 ## Étape 3 — Vérifier qu'Ollama est joignable depuis Docker
 
@@ -84,6 +97,7 @@ avec le volume `rag_chroma` pour l'index. Points à connaître :
 - **`extra_hosts: host.docker.internal:host-gateway`** : l'adresse de l'hôte est écrite
   dans `/etc/hosts`, sans dépendre du DNS de Docker.
 - **Ollama ailleurs** (PC IA) : définir `OLLAMA_BASE_URL=http://<ip>:11434` dans `.env`.
+- **Modèle** : `RAG_LLM_MODEL` dans `.env` (défaut `qwen2.5:3b`).
 - **Indexation au démarrage** : tant que la collection est vide, chaque démarrage retente
   l'indexation. Après une panne d'Ollama, un `docker compose restart rag-assistant` suffit.
 - **Healthcheck** sur `/health/ready` : le conteneur reste `unhealthy` tant que l'index
@@ -100,6 +114,11 @@ docker compose up -d rag-assistant
 Au **premier démarrage**, le conteneur indexe automatiquement les docs (il calcule
 les embeddings via Ollama — quelques dizaines de secondes). Les fois suivantes,
 l'index persistant est réutilisé.
+
+La collection porte un numéro de version (`COLLECTION`, actuellement
+`resilience-docs-v2`). Quand la façon d'indexer change (découpage, modèle ou préfixes
+d'embeddings), on l'incrémente : la nouvelle collection est vide, donc reconstruite au
+démarrage, sans mélanger des vecteurs incompatibles ni vider le volume à la main.
 
 ## Étape 6 — Vérifier
 
@@ -120,8 +139,11 @@ Depuis le conteneur (sur le PC Hôte, le service ne publie aucun port ; en dev, 
 `-f compose.dev.yaml` après `docker compose`) :
 
 ```powershell
-docker compose exec rag-assistant python -c "import json,urllib.request as u; r=u.Request('http://localhost:8000/ask', json.dumps({'question': 'Que faire en cas de flood HTTP sur payment-api ?'}).encode(), {'Content-Type': 'application/json'}); print(json.dumps(json.loads(u.urlopen(r, timeout=120).read()), ensure_ascii=False, indent=2))"
+docker compose exec rag-assistant python -c "import json,urllib.request as u; r=u.Request('http://localhost:8000/ask', json.dumps({'question': 'Que faire en cas de flood HTTP sur payment-api ?'}).encode(), {'Content-Type': 'application/json'}); print(json.dumps(json.loads(u.urlopen(r, timeout=180).read()), ensure_ascii=False, indent=2))"
 ```
+
+Compter environ une minute (CPU) ; la première question après démarrage d'Ollama ajoute
+le chargement du modèle. Ensuite, le modèle reste en mémoire 30 min (`KEEP_ALIVE`).
 
 La réponse doit être en français, ancrée dans la doc, avec une liste `sources`
 pointant vers les fichiers de `docs/exploitation/`.
@@ -134,6 +156,11 @@ et ne publie aucun port. Le back-office (`/admin`, rôle `ops`) l'interroge via
 la question vers `http://rag-assistant:8000/ask` sur le réseau Docker interne.
 `payment-api` et `rag-assistant` partagent pour cela le réseau `llm` (PC Hôte) ou
 `default` (dev).
+
+Délais de la chaîne, du plus court au plus long, pour qu'une réponse lente arrive :
+`payment-api` attend 120 s (`RAG_ASSISTANT_TIMEOUT_S`, puis 504 `assistant_timeout`), et
+le WAF 150 s sur `/api/admin/assistant/ask` (`proxy_read_timeout`, au lieu des 60 s par
+défaut de nginx).
 
 ---
 
@@ -156,7 +183,16 @@ Le nom du volume se vérifie avec `docker volume ls | Select-String rag_chroma`.
 
 - `OLLAMA_BASE_URL` : où joindre Ollama (`http://host.docker.internal:11434` ici).
 - `LLM_MODEL` / `EMBED_MODEL` : les modèles Ollama (déjà téléchargés à l'étape 2).
-- `TOP_K` : nombre de passages récupérés par question (défaut 4).
+  Dans Compose, `LLM_MODEL` vient de `RAG_LLM_MODEL` (`.env`).
+- `TOP_K` : nombre de passages donnés au LLM (défaut 2 ; chacun ajoute ~15 s de lecture).
+- `NUM_PREDICT` : longueur maximale d'une réponse en tokens (défaut 256).
+- `KEEP_ALIVE` : durée de maintien du modèle en mémoire (défaut `30m`).
+- `COLLECTION` : nom versionné de la collection (cf. étape 5).
+
+**Préfixes d'embeddings.** `nomic-embed-text` attend `search_document: ` devant les textes
+indexés et `search_query: ` devant les questions (`embeddings.py`). Sans eux, la
+recherche ramenait des passages hors sujet (ex. « À quoi sert le relais L4 ? » ne
+trouvait pas RB-06).
 
 ## Conseils pour la démonstration
 
@@ -171,8 +207,9 @@ Le nom du volume se vérifie avec `docker volume ls | Select-String rag_chroma`.
   (`OLLAMA_HOST=0.0.0.0:11434` + Ollama relancé) et le pare-feu Windows pour le port 11434.
 - **`/health/ready` renvoie `empty`** : l'indexation a échoué — regarder les logs ;
   souvent Ollama injoignable au moment de l'index (mêmes causes que ci-dessus).
-- **Réponses lentes** : normal au tout premier appel (chargement du modèle en RAM) ;
-  les suivants sont plus rapides.
+- **Réponses lentes ou `assistant_timeout`** : vérifier le modèle utilisé (`ollama ps`,
+  champ `model` du log `rag.answer`) ; un 8B sur CPU est trop lent. Vérifier aussi que le
+  PC est sur secteur, en mode performances.
 
 ## Limites assumées
 

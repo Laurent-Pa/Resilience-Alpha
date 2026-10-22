@@ -4,17 +4,17 @@
 # le frontmatter YAML comme métadonnées, calcule les embeddings (Ollama)
 # et stocke le tout dans Chroma.
 #
-# Usage :  python ingest.py          (réindexe tout)
+# Usage :  python ingest.py   (sur une collection VIDE : il ajoute, ne remplace pas)
 # ===================================================================
 import pathlib
 
 import frontmatter
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 import config
+from embeddings import make_embeddings
 
 # On découpe sur les titres de niveau 1 à 3 : chaque section devient un fragment
 # autonome (c'est justement la convention de rédaction des docs d'exploitation).
@@ -66,13 +66,15 @@ def charger_fragments():
 
 
 def construire_index():
-    """Construit (ou reconstruit) l'index Chroma à partir des fragments."""
+    """Construit l'index Chroma à partir des fragments.
+
+    from_documents AJOUTE à la collection existante (il ne la remplace pas) : relancé sur
+    un index plein, il crée des doublons. Le Dockerfile ne l'appelle donc que si la
+    collection est vide ; pour réindexer, vider le volume (cf. README)."""
     fragments = charger_fragments()
-    embeddings = OllamaEmbeddings(model=config.EMBED_MODEL, base_url=config.OLLAMA_BASE_URL)
-    # from_documents (re)crée la collection persistée sur disque.
     Chroma.from_documents(
         documents=fragments,
-        embedding=embeddings,
+        embedding=make_embeddings(),  # préfixe "search_document: " (cf. embeddings.py)
         collection_name=config.COLLECTION,
         persist_directory=config.PERSIST_DIR,
     )
