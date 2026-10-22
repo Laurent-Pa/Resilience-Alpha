@@ -1,13 +1,13 @@
 # ===================================================================
 # PROVISIONING GRAFANA — sources de données automatiques
-# Grâce à ce fichier, Prometheus et Loki sont branchés dans Grafana
-# AU DÉMARRAGE, sans aucun clic dans l'interface.
-# Les adresses utilisent les noms de conteneurs (prometheus, loki).
+# Prometheus et Loki branchés au démarrage, sans clic.
+# Les uid fixes ("prometheus", "loki") sont référencés par les dashboards.
 # ===================================================================
 apiVersion: 1
 
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
@@ -15,6 +15,7 @@ datasources:
     editable: true
 
   - name: Loki
+    uid: loki
     type: loki
     access: proxy
     url: http://loki:3100
