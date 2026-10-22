@@ -274,6 +274,7 @@ services:
       CONTAINERS: 1        # lister/inspecter (recycle_service)
       POST: 1              # autoriser les écritures (sinon API en lecture seule)
       EXEC: 1              # docker_container_exec (block_ip, kill_db_conns)
+      IMAGES: 1            # docker_container inspecte l'image avant restart (recycle_service)
       ALLOW_RESTARTS: 1    # restart de conteneur (recycle_service) ; sinon 403 Forbidden
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
