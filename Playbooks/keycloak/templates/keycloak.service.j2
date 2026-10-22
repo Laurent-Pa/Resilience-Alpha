@@ -1,0 +1,18 @@
+[Unit]
+Description=Keycloak
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=exec
+User={{ keycloak_user }}
+Group={{ keycloak_group }}
+EnvironmentFile=/etc/default/keycloak
+ExecStart={{ keycloak_home }}/bin/kc.sh start --optimized
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=102642
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

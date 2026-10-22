@@ -1,0 +1,3 @@
+vault_keycloak_db_password: "ChangezMoi!"
+vault_keycloak_admin_user: "admin"
+vault_keycloak_admin_password: "ChangezMoiAussi!"

@@ -1,0 +1,67 @@
+---
+- name: Installer et configurer HashiCorp Vault
+  hosts: vault_servers
+  become: true
+  vars:
+    vault_version: "1.15.4"
+    vault_user: vault
+    vault_config_dir: /etc/vault.d
+    vault_data_dir: /opt/vault/data
+
+  tasks:
+    - name: Installer les dépendances
+      ansible.builtin.apt:
+        name: [unzip, curl, gnupg]
+        state: present
+        update_cache: true
+
+    - name: Créer l'utilisateur vault
+      ansible.builtin.user:
+        name: "{{ vault_user }}"
+        system: true
+        shell: /bin/false
+
+    - name: Créer les répertoires
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ vault_user }}"
+        mode: "0750"
+      loop:
+        - "{{ vault_config_dir }}"
+        - "{{ vault_data_dir }}"
+
+    - name: Télécharger et installer le binaire Vault
+      ansible.builtin.unarchive:
+        src: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_amd64.zip"
+        dest: /usr/local/bin
+        remote_src: true
+        creates: /usr/local/bin/vault
+
+    - name: Déployer la configuration
+      ansible.builtin.template:
+        src: vault.hcl.j2
+        dest: "{{ vault_config_dir }}/vault.hcl"
+        owner: "{{ vault_user }}"
+        mode: "0640"
+      notify: Redémarrer vault
+
+    - name: Déployer le service systemd
+      ansible.builtin.template:
+        src: vault.service.j2
+        dest: /etc/systemd/system/vault.service
+        mode: "0644"
+      notify: Redémarrer vault
+
+    - name: Activer et démarrer Vault
+      ansible.builtin.systemd:
+        name: vault
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Redémarrer vault
+      ansible.builtin.systemd:
+        name: vault
+        state: restarted
